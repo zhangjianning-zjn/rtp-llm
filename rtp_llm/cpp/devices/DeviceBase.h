@@ -92,6 +92,7 @@ public:
         return enable_device_perf_;
     }
     void                     setTraceMemory(bool trace_memory);
+    bool                     getTraceMemory() const;
     void                     holdBufferRecycle();
     void                     releaseBufferRecycleHold();
     BufferPtr                allocateBuffer(const BufferParams& params, const BufferHints& hints = {});

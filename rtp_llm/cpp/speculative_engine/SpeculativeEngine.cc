@@ -220,6 +220,7 @@ WarmUpResult SpeculativeEngine::warmUp() {
     fake_input->generate_config->calculate_loss       = int(socre_gpt_params.warm_up_with_loss_);
     fake_input->generate_config->top_k                = 2;
     fake_input->begin_time_us                         = autil::TimeUtility::currentTimeInMicroSeconds();
+    bool is_tracing_memory                            = device_->getTraceMemory();
     device_->setTraceMemory(true);
 
     score_executor_.reset(new ScoreExecutor(score_model_params_, device_, nullptr, nullptr, true));
@@ -237,7 +238,7 @@ WarmUpResult SpeculativeEngine::warmUp() {
 
     THROW_IF_STATUSOR_ERROR(preRun(fake_input, preRunMode::prefill_warm_up));
     const auto device_status = device_->getDeviceStatus();
-    device_->setTraceMemory(false);
+    device_->setTraceMemory(is_tracing_memory);
     (void)score_executor_.reset(nullptr);
     if (propose_model_params_->draftModel()) {
         (void)propose_executor_.reset(nullptr);

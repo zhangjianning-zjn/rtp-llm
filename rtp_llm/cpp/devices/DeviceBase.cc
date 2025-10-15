@@ -31,6 +31,10 @@ void DeviceBase::setTraceMemory(bool trace_memory) {
     buffer_manager_->setTraceMemory(trace_memory);
 }
 
+bool DeviceBase::getTraceMemory() const {
+    return buffer_manager_->getTraceMemory();
+}
+
 void DeviceBase::holdBufferRecycle() {
     buffer_manager_->holdRecycle();
 }

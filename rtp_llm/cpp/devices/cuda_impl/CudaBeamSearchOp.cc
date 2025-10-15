@@ -68,7 +68,8 @@ BeamSearchOutput CudaDevice::sampleBeamSearch(const BeamSearchParams& params) {
     });
 
     // set beam search kernel workspace
-    BufferPtr workspace = allocateBuffer({DataType::TYPE_BYTES, {config.mWorkspaceSize}, AllocationType::DEVICE});
+    BufferPtr workspace = allocateBuffer({DataType::TYPE_BYTES, {config.mWorkspaceSize}, AllocationType::DEVICE},
+                                         {"beam_search_worksapce"});
     cudaMemsetAsync(workspace->data(), 0, workspace->sizeBytes(), stream_);
 
     // allocate output buffer

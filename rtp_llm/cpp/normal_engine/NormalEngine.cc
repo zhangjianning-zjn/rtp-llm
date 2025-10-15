@@ -126,11 +126,12 @@ WarmUpResult NormalEngine::prefillWarmUp(const EngineInitParams& params) {
     fake_input->generate_config->num_return_sequences = params_.max_context_batch_size_;
     fake_input->generate_config->calculate_loss       = int(params_.warm_up_with_loss_);
     fake_input->begin_time_us                         = autil::TimeUtility::currentTimeInMicroSeconds();
+    bool is_tracing_memory                            = device_->getTraceMemory();
     device_->setTraceMemory(true);
     executor_.reset(new NormalExecutor(params, nullptr, device_, nullptr, true));
     THROW_IF_STATUSOR_ERROR(preRun(fake_input, preRunMode::prefill_warm_up));
     const auto device_status = device_->getDeviceStatus();
-    device_->setTraceMemory(false);
+    device_->setTraceMemory(is_tracing_memory);
     (void)executor_.reset(nullptr);
     return WarmUpResult(
         {device_status.device_memory_status.preserved_bytes, device_status.device_memory_status.max_consumed_bytes});
@@ -141,6 +142,7 @@ WarmUpResult NormalEngine::decodeWarmUp(const EngineInitParams& params) {
     fake_input->generate_config->num_return_sequences = params_.max_generate_batch_size_;
     fake_input->generate_config->calculate_loss       = int(params_.warm_up_with_loss_);
     fake_input->begin_time_us                         = autil::TimeUtility::currentTimeInMicroSeconds();
+    bool is_tracing_memory                            = device_->getTraceMemory();
     device_->setTraceMemory(true);
 
     auto cache_config               = CacheConfigCreator::createBasicConfig(params_);
@@ -150,7 +152,7 @@ WarmUpResult NormalEngine::decodeWarmUp(const EngineInitParams& params) {
     executor_.reset(new NormalExecutor(params, cache_manager, device_, nullptr, true));
     THROW_IF_STATUSOR_ERROR(preRun(fake_input, preRunMode::decode_warm_up));
     const auto device_status = device_->getDeviceStatus();
-    device_->setTraceMemory(false);
+    device_->setTraceMemory(is_tracing_memory);
     (void)executor_.reset(nullptr);
     return WarmUpResult(
         {device_status.device_memory_status.preserved_bytes, device_status.device_memory_status.max_consumed_bytes});

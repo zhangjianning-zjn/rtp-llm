@@ -82,6 +82,10 @@ void BufferManager::setTraceMemory(bool trace_memory) {
     trace_memory_ = trace_memory;
 }
 
+bool BufferManager::getTraceMemory() const {
+    return trace_memory_;
+}
+
 void BufferManager::recordAllcation(const BufferParams& params, const BufferHints& hints, const BufferPtr& buffer) {
     if (trace_memory_) {
         auto stack_trace_id = trace_malloc_stack_ ? autil::StackTracer::getInstance()->getTraceId() : 0;
@@ -90,9 +94,10 @@ void BufferManager::recordAllcation(const BufferParams& params, const BufferHint
             AllocationRecord record             = {params.allocation, buffer->sizeBytes(), hints, stack_trace_id};
             allocation_records_[buffer->data()] = record;
         }
-        RTP_LLM_LOG_INFO("record allocation: %p, size: %zu, tag: [%s], trace id [%lu]",
+        RTP_LLM_LOG_INFO("record allocation: %p, size: %zu, where: %zu, tag: [%s], trace id [%lu]",
                          buffer->data(),
                          buffer->sizeBytes(),
+                         buffer->where(),
                          hints.tag.c_str(),
                          stack_trace_id);
         auto       status                = queryStatus();
@@ -118,7 +123,7 @@ void BufferManager::recordRecycle(void* data) {
             WriteLock lock(mutex_);
             allocation_records_.erase(data);
         }
-        RTP_LLM_LOG_DEBUG("record recycle: %p [%s]", data, allocation_records_[data].hints.tag.c_str());
+        RTP_LLM_LOG_INFO("record recycle: %p [%s]", data, allocation_records_[data].hints.tag.c_str());
     }
 }
 

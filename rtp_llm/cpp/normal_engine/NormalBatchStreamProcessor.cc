@@ -290,14 +290,16 @@ absl::StatusOr<SamplerInputs> NormalBatchStreamProcessor::gatherSamplerInput(
     sampler_inputs.vocab_size = vocab_size;
     if (return_all_probs) {
         sampler_inputs.all_probs = device_->allocateBuffer(
-            {rtp_llm::DataType::TYPE_FP32, {total_batch_size_in, vocab_size}, rtp_llm::AllocationType::DEVICE}, {});
+            {rtp_llm::DataType::TYPE_FP32, {total_batch_size_in, vocab_size}, rtp_llm::AllocationType::DEVICE},
+            {"sampler_inputs_all_probs"});
         device_->bufMemset(*sampler_inputs.all_probs, 0);
     }
 
     // copy logits when needs tiling or returning logits
     if (need_tiling) {
         sampler_inputs.logits = device_->allocateBuffer(
-            {model_output.logits->type(), {total_batch_size_in, vocab_size}, rtp_llm::AllocationType::DEVICE}, {});
+            {model_output.logits->type(), {total_batch_size_in, vocab_size}, rtp_llm::AllocationType::DEVICE},
+            {"sampler_inputs_logits"});
         device_->copy({sampler_inputs.logits->view(0, total_decode_batch_size_in),
                        model_output.logits->view(0, total_decode_batch_size_in)});
         size_t input_offset = 0, logits_offset = 0;
@@ -312,7 +314,8 @@ absl::StatusOr<SamplerInputs> NormalBatchStreamProcessor::gatherSamplerInput(
             logits_offset += 1;
         }
     } else if (return_logits || calculate_softmax_probs) {
-        sampler_inputs.logits = device_->clone({*model_output.logits, rtp_llm::AllocationType::DEVICE});
+        sampler_inputs.logits =
+            device_->clone({*model_output.logits, rtp_llm::AllocationType::DEVICE, {"sampler_inputs_logits"}});
     } else {
         sampler_inputs.logits = model_output.logits;
     }

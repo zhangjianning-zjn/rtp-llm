@@ -26,7 +26,7 @@ KVCacheAllocator::~KVCacheAllocator() {
 }
 
 bool KVCacheAllocator::init() {
-    cache_aligned_buffer_ = device_->allocateBuffer({rtp_llm::TYPE_INT8, {config_.total_size}, atype_});
+    cache_aligned_buffer_ = device_->allocateBuffer({rtp_llm::TYPE_INT8, {config_.total_size}, atype_}, {"kv_cache_aligned_buffer"});
     cache_base_ptr_       = cache_aligned_buffer_->data();
     if (cache_aligned_buffer_ == nullptr || cache_base_ptr_ == nullptr) {
         RTP_LLM_LOG_ERROR("kvcache allocator allocate cache aligned buffer is null");
@@ -281,8 +281,8 @@ std::tuple<bool, rtp_llm::BufferPtr, rtp_llm::BufferPtr> KVCacheAllocator::getKV
     auto k_shape  = config_.getKeyShape();
     auto v_shape  = config_.getValueShape();
 
-    auto kdst_buffer = device_->allocateBuffer({config_.dtype, {k_shape}, atype_});
-    auto vdst_buffer = device_->allocateBuffer({config_.dtype, {v_shape}, atype_});
+    auto kdst_buffer = device_->allocateBuffer({config_.dtype, {k_shape}, atype_}, {"kv_cache_kdst_buffer"});
+    auto vdst_buffer = device_->allocateBuffer({config_.dtype, {v_shape}, atype_}, {"kv_cache_vdst_buffer"});
 
     auto copyFunc = [&](rtp_llm::BufferPtr& src_blocks, rtp_llm::BufferPtr& dst_buffer, size_t offset, size_t shape) {
         auto src_data   = (char*)(src_blocks->data()) + offset;
@@ -305,8 +305,8 @@ std::tuple<bool, rtp_llm::BufferPtr, rtp_llm::BufferPtr> KVCacheAllocator::getKV
 
     auto k_shape     = config_.getKeyShape();
     auto v_shape     = config_.getValueShape();
-    auto kdst_buffer = device_->allocateBuffer({config_.dtype, {config_.layer_num, k_shape}, atype_});
-    auto vdst_buffer = device_->allocateBuffer({config_.dtype, {config_.layer_num, v_shape}, atype_});
+    auto kdst_buffer = device_->allocateBuffer({config_.dtype, {config_.layer_num, k_shape}, atype_}, {"kv_cache_kdst_buffer"});
+    auto vdst_buffer = device_->allocateBuffer({config_.dtype, {config_.layer_num, v_shape}, atype_}, {"kv_cache_vdst_buffer"});
 
     for (uint32_t layer_id = 0; layer_id < config_.layer_num; layer_id++) {
         auto k_offset = config_.getKeyOffset(block_index, layer_id);

@@ -64,6 +64,7 @@ public:
     BufferPtr            allocate(const BufferParams& params, const BufferHints& hints);
     void                 recycle(Buffer* buffer, IAllocator* allocator);
     void                 setTraceMemory(bool trace_memory);
+    bool                 getTraceMemory() const;
     virtual BufferStatus queryStatus();
     std::string          printAllocationRecords(IAllocator* allocator);
 
