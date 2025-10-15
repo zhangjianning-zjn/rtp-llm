@@ -147,13 +147,14 @@ SamplerOutput Sampler::forward(const SamplerInputs& inputs) {
             SCOPED_UPDATE_BUFFER_SHAPE(cum_log_probs_in, {beam_batch_size, (size_t)cur_num_beams_in});
             SCOPED_UPDATE_BUFFER_SHAPE(cum_log_probs_out, {beam_batch_size, (size_t)cur_num_beams_out});
 
-            auto logits_device           = device_->clone({logits, AllocationType::DEVICE});
-            auto token_ids_in_device     = device_->clone({token_ids_in, AllocationType::DEVICE});
-            auto input_lengths_device    = device_->clone({input_lengths, AllocationType::DEVICE});
-            auto sequence_lengths_device = device_->clone({sequence_lengths, AllocationType::DEVICE});
-            auto cum_log_probs_in_device = device_->clone({cum_log_probs_in, AllocationType::DEVICE});
+            auto token_ids_in_device  = device_->clone({token_ids_in, AllocationType::DEVICE, {"token_ids_in"}});
+            auto input_lengths_device = device_->clone({input_lengths, AllocationType::DEVICE, {"input_lengths"}});
+            auto sequence_lengths_device =
+                device_->clone({sequence_lengths, AllocationType::DEVICE, {"sequence_lengths"}});
+            auto cum_log_probs_in_device =
+                device_->clone({cum_log_probs_in, AllocationType::DEVICE, {"cum_log_probs_in"}});
 
-            auto output = device_->sampleBeamSearch({*logits_device,
+            auto output = device_->sampleBeamSearch({logits,
                                                      token_ids_in_device,
                                                      input_lengths_device,
                                                      sequence_lengths_device,
