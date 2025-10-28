@@ -914,6 +914,27 @@ void GenerateStream::setSoftmaxProbs(const rtp_llm::Buffer& softmax_probs, int s
     }
 }
 
+void GenerateStream::updateLastLogits(const rtp_llm::Buffer& logits) {
+    const auto& select_tokens_id = generate_input_->generate_config->select_tokens_id;
+    if (!select_tokens_id.empty()) {
+        auto out_of_bound_token_id =
+            std::find_if_not(select_tokens_id.begin(), select_tokens_id.end(), [this](int select_token_id) {
+                return select_token_id >= 0 && select_token_id < vocabSize();
+            });
+        if (out_of_bound_token_id == select_tokens_id.end()) {
+            auto select_buf = rtp_llm::vector2Buffer(generate_input_->generate_config->select_tokens_id);
+            last_logits_    = device_->select({logits, *select_buf, 1});
+            last_logits_    = device_->clone({*last_logits_, rtp_llm::AllocationType::HOST});
+        } else {
+            RTP_LLM_LOG_WARNING("select_token_id out of bound, expected >= 0 and < vocab size [%d], found [%d]",
+                                vocabSize(),
+                                *out_of_bound_token_id);
+        }
+    } else {
+        last_logits_ = device_->clone({logits, rtp_llm::AllocationType::HOST});
+    }
+}
+
 rtp_llm::BufferPtr GenerateStream::getLoss() {
     return loss_;
 }

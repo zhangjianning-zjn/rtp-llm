@@ -152,7 +152,7 @@ class OpenaiEndpoint(object):
         if request.logprobs or request.functions:
             config.is_streaming = True
         config.add_special_tokens(self.model_config.special_tokens)
-        config.convert_select_tokens(self.tokenizer.vocab_size, self.tokenizer)
+        config.convert_select_tokens(len(self.tokenizer), self.tokenizer)
         if (
             request.extra_configs
             and request.extra_configs.max_thinking_tokens is not None

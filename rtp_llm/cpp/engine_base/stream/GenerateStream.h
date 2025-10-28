@@ -231,6 +231,7 @@ public:
     void                        setKVCache(const BatchKVCacheResource& kv_cache_resource);
     void                        setLoss(const rtp_llm::Buffer& loss);
     void                        setSoftmaxProbs(const rtp_llm::Buffer& softmax_probs, int start_pos);
+    void                        updateLastLogits(const rtp_llm::Buffer& logits);
     const BatchKVCacheResource& kvCache() const;
     size_t                      maxBlockSize() const;
 
@@ -549,6 +550,7 @@ protected:
     rtp_llm::BufferPtr                       softmax_probs_;
     rtp_llm::BufferPtr                       loss_;
     rtp_llm::BufferPtr                       last_hidden_states_ = nullptr;
+    rtp_llm::BufferPtr                       last_logits_        = nullptr;
     int                                      loss_index_         = 0;
     std::shared_ptr<std::mutex>              output_mutex_;
     std::shared_ptr<std::condition_variable> cv_;

@@ -40,6 +40,7 @@ std::shared_ptr<GenerateConfig> QueryConverter::transGenerateConfig(const Genera
     generate_config->gen_timeline             = config_proto->gen_timeline();
     generate_config->profile_step             = config_proto->profile_step();
     generate_config->ignore_eos               = config_proto->ignore_eos();
+    TRANS_OPTIONAL(logits_index);
     generate_config->select_tokens_id.resize(config_proto->select_tokens_id_size());
     memcpy(generate_config->select_tokens_id.data(),
            config_proto->select_tokens_id().data(),

@@ -40,31 +40,12 @@ GenerateOutputs NormalGenerateStream::prepareGenerateOutput(const StreamUpdateIn
 
         // TODO(xinfei.sxf) optimize this copy : only copy last token
         complete_token_ids_->copyTokensTo(i, generate_output.output_ids->data(), last_output_pos_, output_len);
-        if (returnLogits() && update_info.logits) {
-            rtp_llm::BufferPtr logits_result;
-            const auto&        select_tokens_id = generate_input_->generate_config->select_tokens_id;
-            if (!select_tokens_id.empty()) {
-                auto out_of_bound_token_id =
-                    std::find_if_not(select_tokens_id.begin(), select_tokens_id.end(), [this](int select_token_id) {
-                        return select_token_id >= 0 && select_token_id < vocabSize();
-                    });
-                if (out_of_bound_token_id == select_tokens_id.end()) {
-                    auto select_buf = rtp_llm::vector2Buffer(generate_input_->generate_config->select_tokens_id);
-                    logits_result   = device_->select({*update_info.logits, *select_buf, 1});
-                } else {
-                    RTP_LLM_LOG_WARNING("select_token_id out of bound, expected >= 0 and < vocab size [%d], found [%d]",
-                                        vocabSize(),
-                                        *out_of_bound_token_id);
-                    logits_result =
-                        device_->allocateBuffer({update_info.logits->type(), {0, 0}, rtp_llm::AllocationType::DEVICE});
-                }
+        if (returnLogits()) {
+            if (last_logits_ == nullptr) {
+                generate_output.logits =
+                    device_->allocateBuffer({rtp_llm::DataType::TYPE_FP16, {0, 0}, rtp_llm::AllocationType::HOST});
             } else {
-                logits_result = update_info.logits;
-            }
-            if (logits_result->shape()[0] <= 1) {
-                generate_output.logits = device_->clone({*logits_result, rtp_llm::AllocationType::HOST});
-            } else {
-                generate_output.logits = device_->clone({logits_result->view(i, 1), rtp_llm::AllocationType::HOST});
+                generate_output.logits = std::move(last_logits_);
             }
         }
 
@@ -209,6 +190,13 @@ void NormalGenerateStream::updateOutput(const StreamUpdateInfo& update_info) {
 
     bool pd_sep_first_token = queryPdSep();
     bool need_update        = pd_sep_first_token || isStreaming() || finished_;
+
+    const auto& logit_index = generateConfig()->logits_index;
+    if (returnLogits() && update_info.logits != nullptr
+        && (logit_index.has_value() ? logit_index.value() + 1 == outputTokenLen() : need_update)) {
+        updateLastLogits(*update_info.logits);
+    }
+
     if (!need_update) {
         return;
     }
