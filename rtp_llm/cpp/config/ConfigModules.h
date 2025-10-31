@@ -206,6 +206,7 @@ struct DeviceResourceConfig {
     int         m_split                     = 0;
     bool        enable_comm_overlap         = true;
     int         enable_layer_micro_batch    = 0;
+    int         engine_async_worker_count   = 0;
     std::string to_string() const;
 };
 
@@ -472,7 +473,7 @@ struct ArpcConfig {
 struct GrpcConfig {
     std::map<std::string, int> client_config;
     std::map<std::string, int> server_config;
-    GrpcConfig(){};
+    GrpcConfig() {};
     GrpcConfig(const std::string& json_str);
     std::string                to_string() const;
     void                       from_json(const std::string& json_str);
