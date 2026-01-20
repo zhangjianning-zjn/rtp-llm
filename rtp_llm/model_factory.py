@@ -2,11 +2,10 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Union
 
 import torch
 
-from rtp_llm.async_decoder_engine.base_engine import BaseEngine
 from rtp_llm.config.py_config_modules import StaticConfig
 
 CUR_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +21,9 @@ from rtp_llm.utils.dump_config_utils import dump_model_to_table
 from rtp_llm.utils.fuser import fetch_remote_file_to_local
 from rtp_llm.utils.util import check_with_info
 from rtp_llm.utils.weight_type import WEIGHT_TYPE
+
+if TYPE_CHECKING:
+    from rtp_llm.async_decoder_engine.base_engine import BaseEngine
 
 
 class ModelFactory:
@@ -151,7 +153,7 @@ class ModelFactory:
         model_config: ModelConfig,
         propose_model_config: Optional[ModelConfig] = None,
         gang_info=None,
-    ) -> BaseEngine:
+    ) -> "BaseEngine":
         from rtp_llm.async_decoder_engine.engine_creator import create_engine
 
         model = ModelFactory._create_model(model_config)
@@ -324,7 +326,7 @@ class ModelFactory:
             )
 
     @staticmethod
-    def create_from_env(gang_info=None) -> BaseEngine:
+    def create_from_env(gang_info=None) -> "BaseEngine":
         from rtp_llm.distribute.gang_info import get_gang_info
 
         normal_model_config = ModelFactory.create_normal_model_config()
@@ -341,7 +343,7 @@ class ModelFactory:
         return engine
 
     @staticmethod
-    def create_from_module(ref_module: torch.nn.Module) -> BaseEngine:
+    def create_from_module(ref_module: torch.nn.Module) -> "BaseEngine":
         normal_model_config = ModelFactory.create_normal_model_config()
         normal_model_config.add_ref_module(ref_module)
         engine = ModelFactory.from_model_config(normal_model_config)
