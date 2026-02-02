@@ -44,7 +44,8 @@ void FlashInferAttnParams::recycle(void* p) {
 }
 
 bool FlashInferAttnParams::check_recycle() {
-    return true;
+    // return true;
+    return false;
 }
 
 FlashInferAttnParams* FlashInferAttnParams::get(int batch_size, int input_token_num) {
@@ -88,9 +89,9 @@ tuple<BufferPtr, vector<torch::Tensor>> FlashInferAttnParams::allocateManyBuffer
 
 FlashInferAttnParams*
 FlashInferAttnParams::create(CudaDevice* device, int batch_size, int input_token_num, int page_num) {
-    if (auto params = get(batch_size, input_token_num)) {
-        return params;
-    }
+    // if (auto params = get(batch_size, input_token_num)) {
+    //     return params;
+    // }
     RTP_LLM_LOG_DEBUG("new FlashInferAttnParams batch_size(%d) input_token_num(%d)", batch_size, input_token_num);
     auto params             = make_unique<FlashInferAttnParams>();
     params->batch_size      = batch_size;
@@ -171,7 +172,8 @@ void FlashInferAttnParams::fillFlashInfer(const BufferPtr& prefix_lengths_host,
                                           const BufferPtr& input_lengths_host,
                                           const BufferPtr& kv_cache_block_id_host,
                                           const int        batch_size,
-                                          const int        tokens_per_block) {
+                                          const int        tokens_per_block,
+                                          bool             is_cross_attention) {
     const int max_batch_blocks = kv_cache_block_id_host ? kv_cache_block_id_host->shape()[1] : -1;
     RTP_LLM_CHECK_WITH_INFO(
         batch_size <= this->batch_size, "batch_size exceed reserved %d > %d", batch_size, this->batch_size);
@@ -206,7 +208,11 @@ void FlashInferAttnParams::fillFlashInfer(const BufferPtr& prefix_lengths_host,
                 positions[offset]    = j + prefix_length;
                 offset += 1;
             }
-            seq_len   = input_length + prefix_length;
+            if (is_cross_attention) {
+                seq_len = prefix_length;
+            } else {
+                seq_len = input_length + prefix_length;
+            }
             max_q_len = max(max_q_len, input_length);
             accu_q_len += input_length;
         } else {
@@ -453,7 +459,8 @@ ParamsPtr FlashInferAttnParams::prepare(rtp_llm::DeviceBase*             device,
     params->attn_configs = attn_configs;
     params->is_prefill   = is_prefill;
 
-    ParamsPtr ret(params, recycle);
+    // ParamsPtr ret(params, recycle);
+    ParamsPtr ret(params);
 
     if (kv_cache_block_id_device) {
         params->kv_cache_block_id_d = Buffer2torchTensor(kv_cache_block_id_device, false);
@@ -465,7 +472,8 @@ ParamsPtr FlashInferAttnParams::prepare(rtp_llm::DeviceBase*             device,
                            input_lengths_host,
                            kv_cache_block_id_host,
                            batch_size,
-                           tokens_per_block);
+                           tokens_per_block,
+                           attn_configs.is_cross_attention);
     params->refreshFlashInferBuf(cuda_device, batch_size, input_token_num);
 
     if (is_prefill || (group_size > 2 && skip_no_prefix)) {

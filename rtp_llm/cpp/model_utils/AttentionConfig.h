@@ -55,6 +55,8 @@ struct AttentionConfigs {
     // data type for attention computation
     c10::ScalarType dtype = c10::ScalarType::Half;
 
+    bool is_cross_attention = false;
+
 public:
     std::string DebugAttentionConfigStr() const;
 };

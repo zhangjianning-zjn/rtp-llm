@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <iostream>
 #include "rtp_llm/cpp/devices/utils/DevicePerfWrapper.h"
+#include <ATen/record_function.h>
 namespace rtp_llm {
 
 torch::Tensor PyWrappedModel::tensorHoldHostAndToCuda(const torch::Tensor& tensor) {
@@ -265,6 +266,7 @@ GptModelOutputs PyWrappedModel::forwardMicroBatched(const GptModelInputs& inputs
 
 GptModelOutputs PyWrappedModel::forward(const GptModelInputs& inputs) {
     DevicePerfWrapper wrapper(device_, "py model forward");
+    RECORD_USER_SCOPE("PyWrappedModel::forward");
     holdInputsHostBuffers(inputs);
     py::gil_scoped_acquire gil;
     try {
@@ -296,11 +298,13 @@ GptModelOutputs PyWrappedModel::forward(const GptModelInputs& inputs) {
 
         // Cast the Python object to PyModelOutputs and extract hidden states
         if (enable_cuda_graph_ && graph_runner_->canRun(py_model_inputs)) {
+            RECORD_USER_SCOPE("cuda graph python forward");
             DevicePerfWrapper wrapper(device_, "cuda graph python forward");
             py_model_inputs.attention_inputs.is_s_padded = true;
             py_model_outputs                             = graph_runner_->forward(py_model_inputs);
             hidden_states = device_->clone({*torchTensor2Buffer(py_model_outputs.hidden_states)});
         } else {
+            RECORD_USER_SCOPE("normal python forward");
             DevicePerfWrapper wrapper(device_, "normal forward");
             auto              attn_pyobj = py_model_.attr("prepare_fmha_impl")(py_model_inputs, false);
             // attn_pyobj.attr("prepare")(py_model_inputs.attention_inputs);
@@ -311,7 +315,16 @@ GptModelOutputs PyWrappedModel::forward(const GptModelInputs& inputs) {
         }
 
         RTP_LLM_LOG_DEBUG("Python object instance forward method called successfully.");
-        return callForwardPostLayers(hidden_states, inputs, true);
+        if (py_model_outputs.logits.numel() > 0) {
+            auto      logits             = device_->clone({*torchTensor2Buffer(py_model_outputs.logits)});
+            BufferPtr last_hidden_states = nullptr;
+            if (py_model_outputs.last_hidden_states.numel() > 0) {
+                last_hidden_states = device_->clone({*torchTensor2Buffer(py_model_outputs.last_hidden_states)});
+            }
+            return GptModelOutputs{std::move(logits), std::move(last_hidden_states), std::move(hidden_states)};
+        } else {
+            return callForwardPostLayers(hidden_states, inputs, true);
+        }
 
     } catch (const py::error_already_set& e) {
         RTP_LLM_LOG_ERROR("Python error during forward call on Python instance: %s", e.what());

@@ -25,6 +25,7 @@ struct TRTAttn: public ParamsBase {
     int           max_prefix_length;
     int           context_total_kv_length;
     bool          decode_plan;
+    bool          is_cross_attention;
 
     DataType attn_type;
 

@@ -49,6 +49,7 @@ ParamsBasePtr TRTPrefillOpBase::prepare(torch_ext::PyAttentionInputs attn_inputs
     attn_params->max_prefix_length       = attn_inputs.prefix_lengths.max().item<int32_t>();
     attn_params->context_total_kv_length = attn_inputs.context_total_kv_length;
     attn_params->input_lengths           = attn_inputs.input_lengths;
+    attn_params->is_cross_attention      = attn_configs_.is_cross_attention;
 
     // 创建 TRT V2 FMHA Runner
     DataType attn_dtype = use_fp8_fmha ? DataType::TYPE_FP8_E4M3 : torchDTypeToDataType(attn_inputs.dtype);
@@ -122,7 +123,9 @@ torch::Tensor TRTPagedPrefillOp::forward(const torch::Tensor&              input
                                       attention_output_orig_quant_scale,
                                       batch_size,  // batch_size,
                                       params->max_seq_len,
-                                      params->max_seq_len + params->max_prefix_length,  // seq_len_with_prefix,
+                                      params->is_cross_attention ?
+                                          params->max_prefix_length :
+                                          params->max_seq_len + params->max_prefix_length,  // seq_len_with_prefix,
                                       token_num,
                                       params->context_total_kv_length,  // token_num_kv,
                                       kv_block_array);

@@ -18,13 +18,21 @@ class EmbeddingTorch(nn.Module):
 
 
 class Embedding(nn.Module):
-    def __init__(self, config: ModelConfig, parallelism_config: ParallelismConfig, weight: torch.Tensor):
+    def __init__(
+        self,
+        config: ModelConfig,
+        parallelism_config: ParallelismConfig,
+        weight: torch.Tensor,
+    ):
         super().__init__()
         self.weight = weight
         self.config = config
         self.parallelism_config = parallelism_config
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
+        assert (
+            input.dtype == torch.int32
+        ), f"the dtype of token ids must be torch.int32, got {input.dtype}"
         tokens = input.size(0)
         hidden_size = self.weight.size(-1)
         output = torch.empty(
@@ -44,7 +52,12 @@ class Embedding(nn.Module):
 
 
 class EmbeddingBert(nn.Module):
-    def __init__(self, config: ModelConfig, parallelism_config: ParallelismConfig, weight: torch.Tensor):
+    def __init__(
+        self,
+        config: ModelConfig,
+        parallelism_config: ParallelismConfig,
+        weight: torch.Tensor,
+    ):
         super().__init__()
         self.weight = weight
         self.config = config

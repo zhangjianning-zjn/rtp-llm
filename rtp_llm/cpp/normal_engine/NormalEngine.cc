@@ -14,6 +14,7 @@
 #include "rtp_llm/cpp/utils/AssertUtils.h"
 #include "autil/TimeUtility.h"
 #include "rtp_llm/cpp/normal_engine/speculative/MtpExecutor.h"
+#include <ATen/record_function.h>
 #include <memory>
 #include <thread>
 #include <random>
@@ -417,7 +418,11 @@ absl::Status NormalEngine::step() {
         profiler_->start();
     }
     int64_t      step_begin_time_us = autil::TimeUtility::currentTimeInMicroSeconds();
-    absl::Status status             = executor_->process(streams);
+    absl::Status status;
+    {
+        RECORD_USER_SCOPE("executor_->process");
+        status = executor_->process(streams);
+    }
 
     if (nullptr != profiler_) {
         profiler_step_--;

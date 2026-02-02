@@ -80,6 +80,11 @@ void KVCacheAllocator::blockBatchCopy(const Buffer& copy_mapping) {
 }
 
 void KVCacheAllocator::blockBatchCopy(const BlockIdPair* begin_ptr, const BlockIdPair* end_ptr) {
+    // FIXME(zhangjianning.zjn): hack for merge
+    const size_t hack_merge_factor = 7;
+    const size_t normal_layer_num  = config_.layer_num - hack_merge_factor;
+    const size_t total_layer_num   = normal_layer_num + 1;
+
     using CopyType = BatchCopyParams::CopyType;
 
     if (end_ptr == begin_ptr) {
@@ -88,7 +93,7 @@ void KVCacheAllocator::blockBatchCopy(const BlockIdPair* begin_ptr, const BlockI
 
     BatchCopyParams copy_params;
 
-    const size_t copy_num = (end_ptr - begin_ptr) * config_.layer_num;
+    const size_t copy_num = (end_ptr - begin_ptr) * total_layer_num;
 
     size_t copy_nums[CopyType::TYPE_SIZE] = {};
     auto   copy_type                      = BatchCopyParams::get_copy_type(
@@ -103,10 +108,13 @@ void KVCacheAllocator::blockBatchCopy(const BlockIdPair* begin_ptr, const BlockI
     auto&  spec                = config_.cache_specs[0];
     size_t kv_block_size_bytes = spec->block_size_bytes();
 
+    auto   base_merge_addr           = static_cast<char*>(convertIndexToAddr(normal_layer_num, 0).kv_addr);
+    size_t merge_kv_block_size_bytes = hack_merge_factor * kv_block_size_bytes;
+
     for (auto it = begin_ptr; it != end_ptr; ++it) {
         auto [src_block_index, dest_block_index] = *it;
 
-        for (int layer_id = 0; layer_id < config_.layer_num; layer_id++) {
+        for (int layer_id = 0; layer_id < normal_layer_num; layer_id++) {
             auto src_addr_info = convertIndexToAddr(layer_id, src_block_index);
             auto dst_addr_info = convertIndexToAddr(layer_id, dest_block_index);
 
@@ -127,6 +135,31 @@ void KVCacheAllocator::blockBatchCopy(const BlockIdPair* begin_ptr, const BlockI
                                 copy_type);
             }
         }
+
+        auto src_addr_info = convertIndexToAddr(normal_layer_num, src_block_index);
+        auto dst_addr_info = convertIndexToAddr(normal_layer_num, dest_block_index);
+
+        if (!src_addr_info.kv_addr || !dst_addr_info.kv_addr) {
+            RTP_LLM_LOG_ERROR("Failed to get block address for layer %d, src_block %d, dst_block %d",
+                              normal_layer_num,
+                              src_block_index,
+                              dest_block_index);
+            continue;
+        }
+
+        auto dst_offset = hack_merge_factor * (static_cast<char*>(dst_addr_info.kv_addr) - base_merge_addr);
+        auto src_offset = hack_merge_factor * (static_cast<char*>(src_addr_info.kv_addr) - base_merge_addr);
+
+        copy_params.add(
+            base_merge_addr + dst_offset, base_merge_addr + src_offset, merge_kv_block_size_bytes, copy_type);
+
+        // no scale copy cuz we are hacking
+        // if (src_addr_info.kv_scale_addr && dst_addr_info.kv_scale_addr) {
+        //     copy_params.add(dst_addr_info.kv_scale_addr,
+        //                     src_addr_info.kv_scale_addr,
+        //                     static_cast<size_t>(config_.kv_scale_stride_bytes),
+        //                     copy_type);
+        // }
     }
 
     device_->batchCopy(copy_params);

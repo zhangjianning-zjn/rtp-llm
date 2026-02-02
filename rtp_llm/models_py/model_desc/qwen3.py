@@ -13,10 +13,60 @@ from rtp_llm.models_py.modules import (
     FMHAImplBase,
     RMSNorm,
 )
-from rtp_llm.ops import ParallelismConfig
+from rtp_llm.ops import HWKernelConfig, ParallelismConfig
 from rtp_llm.ops.compute_ops import KVCache, PyModelInputs, PyModelOutputs
 from rtp_llm.utils.model_weight import W
-from rtp_llm.ops import HWKernelConfig
+
+
+def print_attn_input(name: str, input):
+    print(
+        f"DBG: {name}.is_prefill={input.is_prefill}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.prefix_lengths {list(input.prefix_lengths.shape)} ={input.prefix_lengths}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.sequence_lengths {list(input.sequence_lengths.shape)} ={input.sequence_lengths}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.input_lengths {list(input.input_lengths.shape)} ={input.input_lengths}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.kv_cache_block_id_host {list(input.kv_cache_block_id_host.shape)} ={input.kv_cache_block_id_host}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.kv_cache_block_id_device {list(input.kv_cache_block_id_device.shape)} ={input.kv_cache_block_id_device}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.dtype={input.dtype}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.kv_block_offset={input.kv_block_offset}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.cu_seqlens {list(input.cu_seqlens.shape)} ={input.cu_seqlens}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.cu_seqlens_without_prefix {list(input.cu_seqlens_without_prefix.shape)} ={input.cu_seqlens_without_prefix}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.padding_offset {list(input.padding_offset.shape)} ={input.padding_offset}",
+        flush=True,
+    )
+    print(
+        f"DBG: {name}.cache_store_inputs={input.cache_store_inputs}",
+        flush=True,
+    )
 
 
 class Qwen3DecoderLayer(nn.Module):
@@ -26,15 +76,24 @@ class Qwen3DecoderLayer(nn.Module):
         parallelism_config: ParallelismConfig,
         weights: Dict[str, torch.Tensor],
         quant_config: Optional[object] = None,
-        hw_kernel_config: Optional['HWKernelConfig'] = None,
+        hw_kernel_config: Optional["HWKernelConfig"] = None,
     ):
         super().__init__()
         attn_configs = config.getAttentionConfigs(parallelism_config.tp_size)
         self.self_attn = CausalAttention(
-            attn_configs, parallelism_config, weights, config.layernorm_eps, quant_config, hw_kernel_config
+            attn_configs,
+            parallelism_config,
+            weights,
+            config.layernorm_eps,
+            quant_config,
+            hw_kernel_config,
         )
         self.mlp = DenseMLP(
-            config.activation_type, parallelism_config, weights, quant_config, hw_kernel_config
+            config.activation_type,
+            parallelism_config,
+            weights,
+            quant_config,
+            hw_kernel_config,
         )
         self.input_layernorm = RMSNorm(
             weights[W.pre_ln_gamma], eps=config.layernorm_eps
@@ -95,7 +154,11 @@ class Qwen3Model(GptModelBase):
         self.layers = nn.ModuleList(
             [
                 Qwen3DecoderLayer(
-                    config, parallelism_config, weights.weights[idx], quant_config, py_hw_kernel_config
+                    config,
+                    parallelism_config,
+                    weights.weights[idx],
+                    quant_config,
+                    py_hw_kernel_config,
                 )
                 for idx in range(self.layer_num)
             ]
@@ -105,6 +168,8 @@ class Qwen3Model(GptModelBase):
         )
 
     def forward(self, inputs: PyModelInputs, fmha_impl: Any = None) -> PyModelOutputs:
+        # print_attn_input("llm_attn_input", inputs.attention_inputs)
+
         input_ids: torch.Tensor = inputs.input_ids
         inputs_embeds = self.embed_tokens(input_ids)
         hidden_states = inputs_embeds
@@ -112,6 +177,7 @@ class Qwen3Model(GptModelBase):
             fmha_impl = self.prepare_fmha_impl(inputs)
             fmha_impl.prepare(inputs.attention_inputs)
         for i, decoder_layer in enumerate(self.layers[: self.layer_num]):
+            # print(f"DBG: qwen3 decoder_layer: {i}", flush=True)
             hidden_states = decoder_layer(
                 hidden_states,
                 fmha_impl,

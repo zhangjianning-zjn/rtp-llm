@@ -18,7 +18,7 @@ protected:
     static size_t               count;
     std::string                 prefix_;
     tpi::ProfilerConfig         config_ = tpi::ProfilerConfig(tpi::ProfilerState::KINETO);
-    std::set<tpi::ActivityType> activities_{tpi::ActivityType::CUDA};
+    std::set<tpi::ActivityType> activities_{tpi::ActivityType::CUDA, tpi::ActivityType::CPU};
     bool                        stoped_ = true;
 };
 

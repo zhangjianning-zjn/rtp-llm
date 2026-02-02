@@ -79,6 +79,28 @@ class CausalAttention(nn.Module):
         qkv = self.qkv_proj(hidden_states)
         if self.qk_fuse_norm is not None:
             qkv = self.qk_fuse_norm(qkv)
+
+        # print(f"DBG: CausalAttention, qkv {list(qkv.shape)}", flush=True)
+        # if kv_cache is not None:
+        #     print(
+        #         f"DBG: CausalAttention, kv_cache.k_cache_base {list(kv_cache.k_cache_base.shape)}",
+        #         flush=True,
+        #     )
+        #     print(
+        #         f"DBG: CausalAttention, kv_cache.v_cache_base {list(kv_cache.v_cache_base.shape)}",
+        #         flush=True,
+        #     )
+        #     # print(
+        #     #     f"DBG: kv_cache.k_scale_base {list(kv_cache.k_scale_base.shape)}",
+        #     #     flush=True,
+        #     # )
+        #     # print(
+        #     #     f"DBG: kv_cache.v_scale_base {list(kv_cache.v_scale_base.shape)}",
+        #     #     flush=True,
+        #     # )
+        # else:
+        #     print(f"DBG: CausalAttention, kv_cache is None", flush=True)
+        # print(f"DBG: CausalAttention, need_rope_kv_cache={need_rope_kv_cache}", flush=True)
         attn_output = fmha_impl.forward(qkv, kv_cache, need_rope_kv_cache)
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         if gate is not None:

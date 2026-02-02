@@ -1,4 +1,5 @@
 #include "OpDefs.h"
+#include "OpDefsUtils.h"
 
 namespace torch_ext {
 
@@ -9,7 +10,8 @@ void registerPyOpDefs(pybind11::module& m) {
         .def_readwrite("kv_scale_base", &KVCache::kv_scale_base, "Key cache scale tensor")
         .def_readonly("seq_size_per_block", &KVCache::seq_size_per_block, "Sequence size per block")
         .def_readonly("layer_id", &KVCache::layer_id, "kv cache layer id")
-        .def("get_layer_cache", &KVCache::getLayerCache);
+        .def("get_layer_cache", &KVCache::getLayerCache)
+        .def("get_multi_layer_cache", &KVCache::getMultiLayerCache);
 
     pybind11::class_<PyModelInitResources>(m, "PyModelInitResources")
         .def(pybind11::init<>())
@@ -74,6 +76,17 @@ void registerPyOpDefs(pybind11::module& m) {
         .def_readonly("decode_cu_seqlens_host", &PyAttentionInputs::decode_cu_seqlens_host)
         .def_readwrite("cache_store_inputs", &PyAttentionInputs::cache_store_inputs)
         .def("__repr__", [](const PyAttentionInputs& self) { return "PyAttentionInputs"; })
+        .def("__copy__", [](const PyAttentionInputs& self) { return PyAttentionInputs(self); })
+        .def("__deepcopy__",
+             [](const PyAttentionInputs& self, py::dict) {
+                 auto input                     = PyAttentionInputs(self);
+                 input.prefix_lengths           = self.prefix_lengths.detach().clone();
+                 input.sequence_lengths         = self.sequence_lengths.detach().clone();
+                 input.input_lengths            = self.input_lengths.detach().clone();
+                 input.kv_cache_block_id_host   = self.kv_cache_block_id_host.detach().clone();
+                 input.kv_cache_block_id_device = self.kv_cache_block_id_device.detach().clone();
+                 return input;
+             })
         .def_readonly("prefill_cuda_graph_copy_params", &PyAttentionInputs::prefill_cuda_graph_copy_params);
 
     pybind11::class_<BertEmbeddingInputs>(m, "BertEmbeddingInputs")
@@ -119,6 +132,11 @@ void registerPyOpDefs(pybind11::module& m) {
         .def(pybind11::init<std::shared_ptr<rtp_llm::ParamsBase>>(),
              pybind11::arg("params_ptr"),
              "Initialize with params pointer only (hidden_states defaults to empty tensor)")
+        .def(pybind11::init<torch::Tensor, torch::Tensor, torch::Tensor>(),
+             pybind11::arg("hidden_states"),
+             pybind11::arg("last_hidden_states"),
+             pybind11::arg("logits"),
+             "Initialize with hidden states, last hidden state, and logits tensor")
         .def(pybind11::init([](torch::Tensor hidden_states, pybind11::object params_obj) {
                  // Try to cast to shared_ptr, return nullptr if conversion fails
                  std::shared_ptr<rtp_llm::ParamsBase> params_ptr = nullptr;
@@ -135,6 +153,9 @@ void registerPyOpDefs(pybind11::module& m) {
              "Initialize with hidden states tensor and params pointer")
         .def_readwrite("hidden_states", &PyModelOutputs::hidden_states, "Hidden states output tensor")
         .def_readwrite("params_ptr", &PyModelOutputs::params_ptr, "Parameters pointer");
+
+    m.def(
+        "calculate_padding_offset", rtp_llm::calculatePaddingOffset, "calculate padding offset for PyAttentionInputs");
 }
 
 }  // namespace torch_ext

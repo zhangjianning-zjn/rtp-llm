@@ -24,6 +24,20 @@ struct KVCache {
         layer_cache.layer_id = idx;
         return layer_cache;
     }
+
+    KVCache getMultiLayerCache(int idx, int layer_num) {
+        using namespace torch::indexing;
+        KVCache layer_cache;
+        auto    span                   = Slice(idx, idx + layer_num);
+        layer_cache.kv_cache_base      = kv_cache_base.index({span});
+        layer_cache.seq_size_per_block = seq_size_per_block;
+        if (kv_scale_base.defined() && kv_scale_base.numel() > 0) {
+            RTP_LLM_LOG_INFO("DBG: has layer_cache.kv_scale_base!, numel = %ld", layer_cache.kv_scale_base.numel());
+            layer_cache.kv_scale_base = kv_scale_base.index({span});
+        }
+        layer_cache.layer_id = idx;
+        return layer_cache;
+    }
 };
 
 struct PyModelInitResources {
@@ -108,14 +122,23 @@ struct PyModelInputs {
 
 struct PyModelOutputs {
     torch::Tensor          hidden_states;
+    torch::Tensor          last_hidden_states;
+    torch::Tensor          logits;
     rtp_llm::ParamsBasePtr params_ptr{nullptr};
 
     PyModelOutputs() = default;
     PyModelOutputs(torch::Tensor hidden_states, std::shared_ptr<rtp_llm::ParamsBase> params_ptr):
-        hidden_states(std::move(hidden_states)), params_ptr(std::move(params_ptr)) {}
+        hidden_states(std::move(hidden_states)), last_hidden_states(), logits(), params_ptr(std::move(params_ptr)) {}
 
     // Constructor with default values
-    PyModelOutputs(torch::Tensor hidden_states): hidden_states(std::move(hidden_states)), params_ptr(nullptr) {}
+    PyModelOutputs(torch::Tensor hidden_states):
+        hidden_states(std::move(hidden_states)), last_hidden_states(), logits(), params_ptr(nullptr) {}
+
+    PyModelOutputs(torch::Tensor hidden_states, torch::Tensor last_hidden_states, torch::Tensor logits):
+        hidden_states(std::move(hidden_states)),
+        last_hidden_states(std::move(last_hidden_states)),
+        logits(std::move(logits)),
+        params_ptr(nullptr) {}
 
     // Constructor with default hidden_states
     PyModelOutputs(std::shared_ptr<rtp_llm::ParamsBase> params_ptr):

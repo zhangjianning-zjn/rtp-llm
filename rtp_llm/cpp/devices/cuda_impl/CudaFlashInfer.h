@@ -116,7 +116,8 @@ public:
                                                 const BufferPtr& input_lengths_host,
                                                 const BufferPtr& kv_cache_block_id_host,
                                                 const int        batch_size,
-                                                const int        tokens_per_block);
+                                                const int        tokens_per_block,
+                                                bool             is_cross_attention = false);
     void                         refreshFlashInferBuf(CudaDevice* device, int batch_size, int token_num);
     static FlashInferAttnParams* get(int batch_size, int input_token_num);
 };
