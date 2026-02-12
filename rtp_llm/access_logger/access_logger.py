@@ -33,15 +33,25 @@ def init_query_access_logger() -> None:
 
 
 class AccessLogger:
+    private_request_default = None
+
     def __init__(self) -> None:
         init_access_logger()
         init_query_access_logger()
         self.logger = logging.getLogger(ACCESS_LOGGER_NAME)
         self.query_logger = logging.getLogger(QUERY_ACCESS_LOGGER_NAME)
 
-    @staticmethod
-    def is_private_request(request: Dict[str, Any]):
-        return request.get("private_request", False)
+    @classmethod
+    def is_private_request(cls, request: Dict[str, Any]):
+        if cls.private_request_default is None:
+            import os
+
+            from rtp_llm.server.server_args.util import str2bool
+
+            cls.private_request_default = str2bool(
+                os.environ.get("DISABLE_ACCESS_LOG", "0")
+            )
+        return request.get("private_request", cls.private_request_default)
 
     def log_access(self, request: Dict[str, Any], response: ResponseLog) -> None:
         request_log = RequestLog.from_request(request)
