@@ -86,7 +86,7 @@ class AuxInfo:
     aux_string: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class GenerateOutput:
     hidden_states: Optional[torch.Tensor] = None
     all_hidden_states: Optional[torch.Tensor] = None

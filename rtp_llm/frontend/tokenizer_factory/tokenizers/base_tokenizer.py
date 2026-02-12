@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from transformers import AutoTokenizer
 
@@ -24,6 +24,39 @@ class BaseTokenizer:
         return self.tokenizer.decode(token_id, **kwargs)
 
     def batch_decode(self, token_ids: Union[List[int], List[List[int]]], **kwargs):
+        if getattr(self.tokenizer, "is_fast", False) is True:
+            self.batch_decode = self._batch_decode_together
+        else:
+            self.batch_decode = self._batch_decode_one_by_one
+
+        return self.batch_decode(token_ids, **kwargs)
+
+    def _batch_decode_together(
+        self,
+        token_ids: Union[List[int], List[List[int]]],
+        skip_special_tokens: Optional[bool] = True,
+        **kwargs
+    ):
+        # FIXME(zhangjianning.zjn): it would be great to support additional kwargs in batch_decode by
+        # falling back to the transformers tokenizers. However, currently frontend passes a lot of
+        # unrelated kwargs, which makes it hard to determine whether it is possible to dispatch to
+        # the fast tokenizer or not.
+
+        # if kwargs:
+        #     return self.tokenizer.batch_decode(token_ids,
+        #                                        skip_special_tokens=skip_special_tokens,
+        #                                        **kwargs)
+        # else:
+
+        if token_ids and not isinstance(token_ids[0], list):
+            token_ids = [token_ids]
+        return self.tokenizer.backend_tokenizer.decode_batch(
+            token_ids, skip_special_tokens
+        )
+
+    def _batch_decode_one_by_one(
+        self, token_ids: Union[List[int], List[List[int]]], **kwargs
+    ):
         return [
             self.tokenizer._decode(
                 seq,

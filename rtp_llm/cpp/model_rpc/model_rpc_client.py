@@ -1,4 +1,5 @@
 import functools
+import itertools
 import logging
 from typing import AsyncGenerator, Optional
 
@@ -206,62 +207,14 @@ def trans_output(
     if num_outputs == 0:
         return GenerateOutputs()
 
-    logits_index = input_py.generate_config.logits_index
-    aux_info_flag = input_py.generate_config.aux_info
-
-    all_output_ids = (
-        trans_tensor(output_pb.output_ids)
-        if output_pb.HasField("output_ids")
-        and (len(output_pb.output_ids.shape) > 0 and output_pb.output_ids.shape[0] > 0)
-        else None
-    )
-    all_hidden_states = (
-        trans_tensor(output_pb.hidden_states)
-        if output_pb.HasField("hidden_states")
-        and len(output_pb.hidden_states.shape) > 0
-        and output_pb.hidden_states.shape[0] > 0
-        else None
-    )
-    all_all_hidden_states = (
-        trans_tensor(output_pb.all_hidden_states)
-        if output_pb.HasField("all_hidden_states")
-        and len(output_pb.all_hidden_states.shape) > 0
-        and output_pb.all_hidden_states.shape[0] > 0
-        else None
-    )
-    all_loss = (
-        trans_tensor(output_pb.loss)
-        if output_pb.HasField("loss")
-        and len(output_pb.loss.shape) > 0
-        and output_pb.loss.shape[0] > 0
-        else None
-    )
-    all_logits = (
-        trans_tensor(output_pb.logits)
-        if output_pb.HasField("logits")
-        and len(output_pb.logits.shape) > 0
-        and output_pb.logits.shape[0] > 0
-        else None
-    )
-    all_all_probs = (
-        trans_tensor(output_pb.all_probs)
-        if output_pb.HasField("all_probs")
-        and len(output_pb.all_probs.shape) > 0
-        and output_pb.all_probs.shape[0] > 0
-        else None
-    )
-
-    outputs_py = GenerateOutputs()
     input_token_ids = input_py.token_ids.reshape(1, -1)
 
-    # 遍历每个 beam/output
-    for i in range(num_outputs):
-        output_py = GenerateOutput()
-        output_py.finished = output_pb.finished[i]
-        current_aux_info = None
-        if aux_info_flag and len(output_pb.aux_info) > i:
-            aux_info_pb = output_pb.aux_info[i]
-            current_aux_info = AuxInfo(
+    none_list = [None] * num_outputs
+
+    all_aux_info = none_list
+    if input_py.generate_config.aux_info:
+        all_aux_info = [
+            AuxInfo(
                 cost_time=aux_info_pb.cost_time_us / 1000.0,
                 first_token_cost_time=aux_info_pb.first_token_cost_time_us / 1000.0,
                 wait_time=aux_info_pb.wait_time_us / 1000.0,
@@ -284,59 +237,104 @@ def trans_output(
                 decode_remote_reuse_len=aux_info_pb.decode_remote_reuse_len,
                 aux_string=aux_info_pb.aux_string,
                 role_addrs=input_py.generate_config.role_addrs,
+                cum_log_probs=(
+                    trans_tensor(aux_info_pb.cum_log_probs).tolist()
+                    if aux_info_pb.HasField("cum_log_probs")
+                    else []
+                ),
+                softmax_probs=(
+                    trans_tensor(aux_info_pb.softmax_probs).tolist()
+                    if aux_info_pb.HasField("softmax_probs")
+                    else []
+                ),
             )
-            if aux_info_pb.HasField("cum_log_probs"):
-                current_aux_info.cum_log_probs = trans_tensor(
-                    aux_info_pb.cum_log_probs
-                ).tolist()
-            if aux_info_pb.HasField("softmax_probs"):
-                current_aux_info.softmax_probs = trans_tensor(
-                    aux_info_pb.softmax_probs
-                ).tolist()
+            for aux_info_pb in output_pb.aux_info
+        ]
 
-            output_py.aux_info = current_aux_info
+    all_output_ids = none_list
+    if (
+        output_pb.HasField("output_ids")
+        and len(output_pb.output_ids.shape) > 0
+        and output_pb.output_ids.shape[0] > 0
+    ):
+        all_output_ids = trans_tensor(output_pb.output_ids)
 
-        if all_output_ids is not None:
-            output_py.output_ids = all_output_ids[i]
-        output_py.input_ids = input_token_ids
+    all_hidden_states = none_list
+    if (
+        output_pb.HasField("hidden_states")
+        and len(output_pb.hidden_states.shape) > 0
+        and output_pb.hidden_states.shape[0] > 0
+    ):
+        all_hidden_states = trans_tensor(output_pb.hidden_states)
 
-        if all_hidden_states is not None:
-            output_py.hidden_states = all_hidden_states[i]
+    all_all_hidden_states = none_list
+    if (
+        output_pb.HasField("all_hidden_states")
+        and len(output_pb.all_hidden_states.shape) > 0
+        and output_pb.all_hidden_states.shape[0] > 0
+    ):
+        all_all_hidden_states = trans_tensor(output_pb.all_hidden_states)
 
-        if all_all_hidden_states is not None:
-            output_py.all_hidden_states = all_all_hidden_states[i]
+    all_loss = none_list
+    if (
+        output_pb.HasField("loss")
+        and len(output_pb.loss.shape) > 0
+        and output_pb.loss.shape[0] > 0
+    ):
+        all_loss = [
+            (
+                (loss[0] if hasattr(loss, "__len__") and len(loss) > 0 else loss)
+                if input_py.generate_config.calculate_loss == 1
+                else loss
+            )
+            for loss in trans_tensor(output_pb.loss)
+        ]
 
-        if all_loss is not None:
-            loss_slice = all_loss[i]
-            if input_py.generate_config.calculate_loss == 1:
-                output_py.loss = (
-                    loss_slice[0]
-                    if hasattr(loss_slice, "__len__") and len(loss_slice) > 0
-                    else loss_slice
-                )
-            else:
-                output_py.loss = loss_slice
+    all_all_probs = none_list
+    if (
+        output_pb.HasField("all_probs")
+        and len(output_pb.all_probs.shape) > 0
+        and output_pb.all_probs.shape[0] > 0
+    ):
+        all_all_probs = trans_tensor(output_pb.all_probs)
 
-        if all_logits is not None:
-            output_py.logits = all_logits[i]
+    all_logits = none_list
+    if (
+        output_pb.HasField("logits")
+        and len(output_pb.logits.shape) > 0
+        and output_pb.logits.shape[0] > 0
+    ):
+        all_logits = trans_tensor(output_pb.logits)
 
-        if all_all_probs is not None:
-            output_py.all_probs = all_all_probs[i]
+        logits_index = input_py.generate_config.logits_index
+        if logits_index is not None:
+            all_logits = list(all_logits.unbind(dim=0))
 
-        if (
-            logits_index is not None
-            and all_logits is not None
-            and current_aux_info
-            and current_aux_info.output_len == logits_index
-        ):
-            stream_state.cached_logits_dict[i] = output_py.logits
+            for idx, (finished, aux_info, logits) in enumerate(
+                zip(output_pb.finished, all_aux_info, all_logits)
+            ):
+                if aux_info and aux_info.output_len == logits_index:
+                    stream_state.cached_logits_dict[idx] = logits
+                elif finished and idx in stream_state.cached_logits_dict:
+                    all_logits[idx] = stream_state.cached_logits_dict[idx]
 
-        if output_py.finished and i in stream_state.cached_logits_dict:
-            output_py.logits = stream_state.cached_logits_dict[i]
-
-        outputs_py.generate_outputs.append(output_py)
-
-    return outputs_py
+    # use args rather than kwargs to boost performance
+    return GenerateOutputs(
+        [
+            GenerateOutput(*args)
+            for args in zip(
+                all_hidden_states,
+                all_all_hidden_states,
+                all_output_ids,
+                itertools.repeat(input_token_ids),
+                output_pb.finished,
+                all_aux_info,
+                all_loss,
+                all_logits,
+                all_all_probs,
+            )
+        ]
+    )
 
 
 class ModelRpcClient(object):
