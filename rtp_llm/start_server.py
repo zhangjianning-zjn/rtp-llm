@@ -211,7 +211,7 @@ def start_vit_server_impl(
         worker_processes = []
         worker_addresses = []
 
-        base_grpc_port = py_env_configs.server_config.rpc_server_port
+        base_grpc_port = py_env_configs.server_config.grpc_server_port
 
         for i in range(vit_server_count):
             internal_grpc_port = base_grpc_port + i + 1
@@ -262,7 +262,7 @@ def start_vit_server_impl(
         # 保存 worker 地址列表，用于健康检查
 
     else:
-        grpc_port = py_env_configs.server_config.rpc_server_port
+        grpc_port = py_env_configs.server_config.grpc_server_port
         http_port = py_env_configs.server_config.server_port
         vit_server_port = http_port
         logging.info(

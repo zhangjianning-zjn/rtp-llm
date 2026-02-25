@@ -36,7 +36,7 @@ public:
                       std::vector<MultimodalInput> multimodal_inputs = {});
 
 private:
-    void startRpcServer(int64_t                              model_rpc_port,
+    void startRpcServer(int64_t                              model_arpc_port,
                         int64_t                              arpc_thread_num,
                         int64_t                              arpc_queue_num,
                         int64_t                              arpc_io_thread_num,
