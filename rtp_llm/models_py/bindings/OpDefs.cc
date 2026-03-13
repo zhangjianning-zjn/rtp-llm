@@ -160,6 +160,11 @@ void registerPyOpDefs(pybind11::module& m) {
         .def(pybind11::init<torch::Tensor>(),
              pybind11::arg("hidden_states"),
              "Initialize with hidden states tensor only (params_ptr defaults to nullptr)")
+        .def(pybind11::init<torch::Tensor, torch::Tensor, torch::Tensor>(),
+             pybind11::arg("hidden_states"),
+             pybind11::arg("last_hidden_states"),
+             pybind11::arg("logits"),
+             "Initialize with hidden states, last hidden state, and logits tensor")
         .def(pybind11::init([](torch::Tensor hidden_states, pybind11::object params_obj) {
                  // Try to cast to shared_ptr, return nullptr if conversion fails
                  std::shared_ptr<rtp_llm::ParamsBase> params_ptr     = nullptr;

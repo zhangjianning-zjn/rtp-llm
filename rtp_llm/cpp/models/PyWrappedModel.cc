@@ -384,10 +384,10 @@ GptModelOutputs PyWrappedModel::forward(const GptModelInputs& inputs) {
         torch::Tensor combo_position_ids =
             inputs.combo_position_ids ? Buffer2torchTensor(inputs.combo_position_ids, false) : torch::empty({0});
 
-        auto      embedding_inputs      = buildPyEmbeddingInputs(inputs);
-        auto      multimodal_inputs     = buildPyMultimodalInputs(inputs);
-        auto      attention_inputs      = buildPyAttentionInputs(inputs);
-        auto      bert_embedding_inputs = buildBertEmbeddingInputs(inputs);
+        auto embedding_inputs      = buildPyEmbeddingInputs(inputs);
+        auto multimodal_inputs     = buildPyMultimodalInputs(inputs);
+        auto attention_inputs      = buildPyAttentionInputs(inputs);
+        auto bert_embedding_inputs = buildBertEmbeddingInputs(inputs);
         if (device_props_.enable_prefill_cp) {
             attention_inputs.context_parallel_info = cp_params;
         }
@@ -430,12 +430,21 @@ GptModelOutputs PyWrappedModel::forward(const GptModelInputs& inputs) {
         }
 
         RTP_LLM_LOG_DEBUG("Python object instance forward method called successfully.");
-        if (device_props_.enable_prefill_cp) {
-            size_t num_valid_tokens =
-                context_parallel_processor_->handleOutputs(device_, hidden_states, inputs, cp_params);
-            return callForwardPostLayers(hidden_states, inputs, true, num_valid_tokens);
+        if (py_model_outputs.logits.numel() > 0) {
+            auto      logits             = device_->clone({*torchTensor2Buffer(py_model_outputs.logits)});
+            BufferPtr last_hidden_states = nullptr;
+            if (py_model_outputs.last_hidden_states.numel() > 0) {
+                last_hidden_states = device_->clone({*torchTensor2Buffer(py_model_outputs.last_hidden_states)});
+            }
+            return GptModelOutputs{std::move(logits), std::move(last_hidden_states), std::move(hidden_states)};
+        } else {
+            if (device_props_.enable_prefill_cp) {
+                size_t num_valid_tokens =
+                    context_parallel_processor_->handleOutputs(device_, hidden_states, inputs, cp_params);
+                return callForwardPostLayers(hidden_states, inputs, true, num_valid_tokens);
+            }
+            return callForwardPostLayers(hidden_states, inputs, true);
         }
-        return callForwardPostLayers(hidden_states, inputs, true);
 
     } catch (const py::error_already_set& e) {
         RTP_LLM_LOG_ERROR("Python error during forward call on Python instance: %s", e.what());

@@ -100,7 +100,7 @@ struct PyAttentionInputs {
     torch::Tensor cu_kv_seqlens;
     torch::Tensor decode_cu_seqlens_host;
     int           context_total_kv_length = 0;
-    int           total_tokens = 0;
+    int           total_tokens            = 0;
     torch::Tensor padding_offset;
     torch::Tensor combo_position_ids;
 
@@ -151,7 +151,10 @@ struct PyModelInputs {
 };
 
 struct PyModelOutputs {
-    torch::Tensor          hidden_states;
+    torch::Tensor hidden_states;
+    torch::Tensor last_hidden_states;
+    torch::Tensor logits;
+
     rtp_llm::ParamsBasePtr params_ptr{nullptr};
     py::object             py_attn_params{py::none()};
 
@@ -159,12 +162,25 @@ struct PyModelOutputs {
 
     // Constructor with default hidden_states
     PyModelOutputs(torch::Tensor hidden_states):
-        hidden_states(std::move(hidden_states)), params_ptr(nullptr), py_attn_params(py::none()) {}
+        hidden_states(std::move(hidden_states)),
+        last_hidden_states(),
+        logits(),
+        params_ptr(nullptr),
+        py_attn_params(py::none()) {}
+
+    PyModelOutputs(torch::Tensor hidden_states, torch::Tensor last_hidden_states, torch::Tensor logits):
+        hidden_states(std::move(hidden_states)),
+        last_hidden_states(std::move(last_hidden_states)),
+        logits(std::move(logits)),
+        params_ptr(nullptr),
+        py_attn_params(py::none()) {}
 
     PyModelOutputs(torch::Tensor                        hidden_states,
                    std::shared_ptr<rtp_llm::ParamsBase> params_ptr,
                    py::object                           py_params = py::none()):
         hidden_states(std::move(hidden_states)),
+        last_hidden_states(),
+        logits(),
         params_ptr(std::move(params_ptr)),
         py_attn_params(std::move(py_params)) {}
 };
