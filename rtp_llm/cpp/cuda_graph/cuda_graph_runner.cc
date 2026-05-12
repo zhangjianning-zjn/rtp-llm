@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <c10/core/InferenceMode.h>
 #include "rtp_llm/cpp/cuda_graph/cuda_graph_device_shims.h"
 #include "rtp_llm/cpp/utils/ProfilingScope.h"
 #include "torch/csrc/autograd/generated/variable_factories.h"
@@ -568,6 +569,8 @@ void CudaGraphRunner::logCudaGraphPoolMemory(const char* phase) {
 }
 
 void CudaGraphRunner::initCapture() {
+    c10::InferenceMode inference_guard(true);
+
     if (enable_cuda_graph_) {
         RTP_LLM_LOG_INFO("CUDA graph capture is enabled");
         shared_graph_pool_ = cuda_graph::graphPoolHandle();
