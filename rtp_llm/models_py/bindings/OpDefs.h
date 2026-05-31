@@ -112,6 +112,40 @@ struct KVCache {
         }
         return layer_cache;
     }
+
+    // hack impl: for ta only
+    LayerKVCache getMultiLayerCache(int idx, int layer_num) {
+        if (idx < 0 || static_cast<size_t>(idx + layer_num - 1) >= layer_attn_types.size())
+            throw std::runtime_error("Invalid layer index: " + std::to_string(idx) + " and layer_num "
+                                     + std::to_string(layer_num));
+
+        std::vector<int64_t> shape;
+
+        auto get_multi_layer_tensor = [&shape, layer_num](const torch::Tensor& tensor) {
+            const auto& sizes = tensor.sizes();
+
+            shape.clear();
+            shape.reserve(sizes.size() + 1);
+            shape.emplace_back(layer_num);
+            shape.insert(shape.end(), sizes.begin(), sizes.end());
+
+            const auto& options = tensor.options();
+
+            return torch::from_blob(tensor.data_ptr(), shape, options);
+        };
+
+        LayerKVCache layer_cache;
+        layer_cache.layer_id           = idx;
+        layer_cache.seq_size_per_block = kernel_seq_size_per_block > 0 ? kernel_seq_size_per_block : seq_size_per_block;
+
+        layer_cache.kv_cache_base = get_multi_layer_tensor(kv_cache_base_by_layer[idx]);
+
+        if (!kv_scale_base_by_layer.empty() && kv_scale_base_by_layer[idx].defined()) {
+            layer_cache.kv_scale_base = get_multi_layer_tensor(kv_scale_base_by_layer[idx]);
+        }
+
+        return layer_cache;
+    }
 };
 
 struct PyModelInitResources {
@@ -229,19 +263,34 @@ struct PyModelInputs {
 
 struct PyModelOutputs {
     torch::Tensor          hidden_states;
+    torch::Tensor          last_hidden_states;
+    torch::Tensor          logits;
     rtp_llm::ParamsBasePtr params_ptr{nullptr};
     py::object             py_attn_params{py::none()};
 
     PyModelOutputs() = default;
 
-    // Constructor with default hidden_states
+    // Constructor with default values
     PyModelOutputs(torch::Tensor hidden_states):
-        hidden_states(std::move(hidden_states)), params_ptr(nullptr), py_attn_params(py::none()) {}
+        hidden_states(std::move(hidden_states)),
+        last_hidden_states(),
+        logits(),
+        params_ptr(nullptr),
+        py_attn_params(py::none()) {}
+
+    PyModelOutputs(torch::Tensor hidden_states, torch::Tensor last_hidden_states, torch::Tensor logits):
+        hidden_states(std::move(hidden_states)),
+        last_hidden_states(std::move(last_hidden_states)),
+        logits(std::move(logits)),
+        params_ptr(nullptr),
+        py_attn_params(py::none()) {}
 
     PyModelOutputs(torch::Tensor                        hidden_states,
                    std::shared_ptr<rtp_llm::ParamsBase> params_ptr,
                    py::object                           py_params = py::none()):
         hidden_states(std::move(hidden_states)),
+        last_hidden_states(),
+        logits(),
         params_ptr(std::move(params_ptr)),
         py_attn_params(std::move(py_params)) {}
 };

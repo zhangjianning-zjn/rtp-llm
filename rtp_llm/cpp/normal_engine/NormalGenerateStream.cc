@@ -3,8 +3,10 @@
 namespace rtp_llm {
 
 ErrorResult<GenerateOutputs> NormalGenerateStream::nextOutput() {
-    // Use finished_ (atomic, set by updateOutput) instead of getStatus() (state-machine,
-    // transitions only in next schedule() call) to avoid 1-second waitNotEmpty() stall.
+    // finished_ is set by the producer (updateOutput) BEFORE pushing the final output, while
+    // status (getStatus()) only flips to FINISHED later in the engine's next schedule() round
+    // via moveToNext(). Checking finished_ avoids a 1s stall waiting on the queue cond for a
+    // status flip that nothing notifies the queue about.
     while ((!hasError()) && !finished_.load(std::memory_order_acquire) && generate_outputs_queue_.isEmpty()) {
         checkTimeout();
         generate_outputs_queue_.waitNotEmpty();
@@ -13,7 +15,7 @@ ErrorResult<GenerateOutputs> NormalGenerateStream::nextOutput() {
         return statusInfo();
     }
     if (generate_outputs_queue_.isEmpty()) {
-        if (finished_.load(std::memory_order_acquire) || isFinished()) {
+        if (finished_.load(std::memory_order_acquire)) {
             return ErrorInfo(ErrorCode::FINISHED, "finished");
         } else {
             return ErrorInfo(ErrorCode::OUTPUT_QUEUE_IS_EMPTY, "output queue is empty");
@@ -191,7 +193,7 @@ void NormalGenerateStream::updateOutput(const StreamUpdateInfo& update_info) {
     // TODO: move it to better position
     RTP_LLM_LOG_DEBUG("stream [%ld] finished: %d, pd_sep: %d, is_streaming: %d, need_remote_generate: %d",
                       streamId(),
-                      is_finished,
+                      finished_.load(std::memory_order_relaxed),
                       queryPdSep(),
                       isStreaming(),
                       update_info.update_remote_generate);
