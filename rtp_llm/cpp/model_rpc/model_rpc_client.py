@@ -129,6 +129,7 @@ def trans_input(input_py: GenerateInput):
     generate_config_pb.return_softmax_probs = (
         input_py.generate_config.return_softmax_probs
     )
+    generate_config_pb.aux_info = input_py.generate_config.aux_info
     generate_config_pb.can_use_pd_separation = (
         input_py.generate_config.can_use_pd_separation
     )
@@ -161,9 +162,7 @@ def trans_input(input_py: GenerateInput):
     generate_config_pb.combo_token_size = input_py.generate_config.combo_token_size
     for i in range(len(input_py.generate_config.banned_combo_token_ids)):
         banned_combo = generate_config_pb.banned_combo_token_ids.rows.add()
-        banned_combo.values.extend(
-            input_py.generate_config.banned_combo_token_ids[i]
-        )
+        banned_combo.values.extend(input_py.generate_config.banned_combo_token_ids[i])
 
     for role_addr in input_py.generate_config.role_addrs:
         role_addr_pb = RoleAddrPB()

@@ -484,11 +484,17 @@ GptModelOutputs PyWrappedModel::forward(const GptModelInputs& inputs) {
         }
 
         RTP_LLM_LOG_DEBUG("Python object instance forward method called successfully.");
-        if (device_props_.enable_prefill_cp) {
-            size_t num_valid_tokens = context_parallel_processor_->handleOutputs(hidden_states, inputs, cp_params);
-            return callForwardPostLayers(hidden_states, inputs, true, num_valid_tokens);
+        if (py_model_outputs.logits.numel() > 0) {
+            return GptModelOutputs{std::move(py_model_outputs.logits),
+                                   std::move(py_model_outputs.last_hidden_states),
+                                   std::move(py_model_outputs.hidden_states)};
+        } else {
+            if (device_props_.enable_prefill_cp) {
+                size_t num_valid_tokens = context_parallel_processor_->handleOutputs(hidden_states, inputs, cp_params);
+                return callForwardPostLayers(hidden_states, inputs, true, num_valid_tokens);
+            }
+            return callForwardPostLayers(hidden_states, inputs, true);
         }
-        return callForwardPostLayers(hidden_states, inputs, true);
 
     } catch (const py::error_already_set& e) {
         RTP_LLM_LOG_ERROR("Python error during forward call on Python instance: %s", e.what());

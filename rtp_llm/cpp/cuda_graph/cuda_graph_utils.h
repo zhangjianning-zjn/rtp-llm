@@ -22,6 +22,14 @@ public:
         decoder_layer_hidden_states_ = hidden_states;
     };
 
+    void setLastHiddenStates(at::Tensor last_hidden_states) {
+        last_hidden_states_ = last_hidden_states;
+    };
+
+    void setLogits(at::Tensor logits) {
+        logits_ = logits;
+    };
+
     CaptureMemoryHold() {}
 
     CaptureMemoryHold(at::Tensor hidden_states, torch_ext::PyModelInputs& inputs, bool is_embedding):
@@ -66,6 +74,8 @@ public:
 public:
     py::object               attn_pyobj_{py::none()};
     at::Tensor               decoder_layer_hidden_states_;
+    at::Tensor               last_hidden_states_;
+    at::Tensor               logits_;
     torch_ext::PyModelInputs py_model_inputs_;
 };
 

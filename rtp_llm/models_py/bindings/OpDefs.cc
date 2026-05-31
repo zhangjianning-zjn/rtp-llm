@@ -1,4 +1,5 @@
 #include "OpDefs.h"
+#include "OpDefsUtils.h"
 
 namespace torch_ext {
 
@@ -32,9 +33,9 @@ void registerPyOpDefs(pybind11::module& m) {
                        &KVCache::layer_attn_types,
                        "Per-layer attention type (CacheGroupType::FULL or LINEAR). "
                        "Empty = all layers treated as FULL (backward compatibility).")
-        .def("get_layer_cache",
-             &KVCache::getLayerCache,
-             "Return a per-layer LayerKVCache for the given global layer id");
+        .def(
+            "get_layer_cache", &KVCache::getLayerCache, "Return a per-layer LayerKVCache for the given global layer id")
+        .def("get_multi_layer_cache", &KVCache::getMultiLayerCache);
 
     pybind11::class_<PyModelInitResources>(m, "PyModelInitResources")
         .def(pybind11::init<>())
@@ -163,6 +164,11 @@ void registerPyOpDefs(pybind11::module& m) {
         .def(pybind11::init<torch::Tensor>(),
              pybind11::arg("hidden_states"),
              "Initialize with hidden states tensor only (params_ptr defaults to nullptr)")
+        .def(pybind11::init<torch::Tensor, torch::Tensor, torch::Tensor>(),
+             pybind11::arg("hidden_states"),
+             pybind11::arg("last_hidden_states"),
+             pybind11::arg("logits"),
+             "Initialize with hidden states, last hidden state, and logits tensor")
         .def(pybind11::init([](torch::Tensor hidden_states, pybind11::object params_obj) {
                  // Try to cast to shared_ptr, return nullptr if conversion fails
                  std::shared_ptr<rtp_llm::ParamsBase> params_ptr     = nullptr;
@@ -181,6 +187,9 @@ void registerPyOpDefs(pybind11::module& m) {
              "Initialize with hidden states tensor and params pointer")
         .def_readwrite("hidden_states", &PyModelOutputs::hidden_states, "Hidden states output tensor")
         .def_readwrite("params_ptr", &PyModelOutputs::params_ptr, "Parameters pointer");
+
+    m.def(
+        "calculate_padding_offset", rtp_llm::calculatePaddingOffset, "calculate padding offset for PyAttentionInputs");
 }
 
 }  // namespace torch_ext
