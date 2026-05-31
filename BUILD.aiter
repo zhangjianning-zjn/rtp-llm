@@ -145,8 +145,8 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-# gfx950 (MI355) excludes module_custom_all_reduce, module_moe_ck2stages, and
-# module_quick_all_reduce because aiter does not provide these .so for gfx950.
+# gfx950 (MI355) excludes module_custom_all_reduce and module_quick_all_reduce
+# because aiter does not provide these .so for gfx950.
 # Runtime fallback: Python-level import guards handle missing modules gracefully
 # (ImportError is caught and the feature is disabled).
 cc_library(
@@ -166,20 +166,6 @@ cc_library(
     tags = ["rocm"],
 )
 
-
-cc_library(
-    name = "module_aiter_enum",
-    srcs = ["aiter/jit/module_aiter_enum.so"],
-    hdrs = ["aiter_meta/csrc/include/aiter_enum.h"],
-    deps = [
-        ":aiter_so",
-        ":aiter_headers",
-    ],
-    copts = [],
-    strip_include_prefix = "aiter_meta/csrc/include/",
-    visibility = ["//visibility:public"],
-    tags = ["rocm"],
-)
 
 cc_library(
     name = "module_quant",
@@ -300,27 +286,6 @@ cc_library(
 )
 
 cc_library(
-    name = "module_mha_fwd",
-    srcs = ["aiter/jit/module_mha_fwd.so"],
-    # glob is used because module_mha_fwd depends on multiple headers in this
-    # directory (attention.h, mha_v3_varlen_fwd.h, etc.) and the exact set
-    # changes across aiter versions. This avoids breakage on aiter upgrades.
-    hdrs = glob([
-        "aiter_meta/csrc/include/*.h",
-    ]),
-    deps = [
-        ":aiter_so",
-        ":aiter_headers",
-        ":ck_fmha_example_headers",
-    ],
-    copts = [],
-    linkopts = [],
-    strip_include_prefix = "aiter_meta/csrc/include/",
-    visibility = ["//visibility:public"],
-    tags = ["rocm"],
-)
-
-cc_library(
     name = "module_fmha_v3_varlen_fwd",
     srcs = ["aiter/jit/module_fmha_v3_varlen_fwd.so"],
     hdrs = ["aiter_meta/csrc/include/torch/mha_v3_varlen_fwd.h"],
@@ -377,27 +342,6 @@ cc_library(
     copts = [],
     linkopts = [],
     strip_include_prefix = "aiter_meta/csrc/ck_gemm_a8w8/include/",
-    visibility = ["//visibility:public"],
-    tags = ["rocm"],
-)
-
-cc_library(
-    name = "module_moe_ck2stages",
-    srcs = select({
-        "@//:rocm_gfx950": [],
-        "//conditions:default": ["aiter/jit/module_moe_ck2stages.so"],
-    }),
-    hdrs = select({
-        "@//:rocm_gfx950": [],
-        "//conditions:default": ["aiter_meta/csrc/include/moe_ck.h"],
-    }),
-    deps = [
-        ":aiter_so",
-        ":aiter_headers",
-    ],
-    copts = [],
-    linkopts = [],
-    strip_include_prefix = "aiter_meta/csrc/include/",
     visibility = ["//visibility:public"],
     tags = ["rocm"],
 )

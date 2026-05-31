@@ -234,6 +234,14 @@ void registerTRTAttn(const py::module& m) {
     pybind11::class_<TRTAttn, std::shared_ptr<TRTAttn>, rtp_llm::ParamsBase>(m, "TRTAttn")
         .def(pybind11::init<>())
         .def_readwrite("kv_cache_offset", &TRTAttn::kv_cache_offset)
+        .def_readwrite("cu_seqlens", &TRTAttn::cu_seqlens)
+        .def_readwrite("cu_kv_seqlens", &TRTAttn::cu_kv_seqlens)
+        .def_readwrite("input_lengths", &TRTAttn::input_lengths)
+        .def_readwrite("prefix_lengths", &TRTAttn::prefix_lengths)
+        .def_readwrite("sequence_lengths", &TRTAttn::sequence_lengths)
+        .def_readwrite("max_seq_len", &TRTAttn::max_seq_len)
+        .def_readwrite("max_prefix_length", &TRTAttn::max_prefix_length)
+        .def_readwrite("context_total_kv_length", &TRTAttn::context_total_kv_length)
         .def(
             "__cpp_ptr__",
             [](TRTAttn& self) { return reinterpret_cast<uintptr_t>(&self); },

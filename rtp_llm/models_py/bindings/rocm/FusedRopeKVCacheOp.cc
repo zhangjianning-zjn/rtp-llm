@@ -227,15 +227,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> FusedRopeKVCachePrefillO
         use_fmha_fp8 = false;
     }
     // FP8 path: keep original behavior (store QKV linearly for flash_attn_varlen_fp8).
-    // Non-FP8 with paged cache: K/V go directly into the cache via store_cache, so
-    //   store_kv=false (writing k_output/v_output would be wasted HBM bandwidth).
-    // Non-FP8 without paged cache (embedding models): store_kv=true so K/V are
-    //   returned as padded buffers for downstream varlen attention; RoPE must still
-    //   run for positional encoding.
+    // Non-FP8: also return padded K/V for downstream varlen attention. The same
+    // kernel still writes paged KV cache through store_cache for subsequent decode.
     bool store_qkv   = use_fmha_fp8 ? !use_paged_fmha : false;
     bool store_q     = true;
     bool store_cache = kv_cache.has_value();
-    bool store_kv    = use_fmha_fp8 ? !use_paged_fmha : !store_cache;
+    bool store_kv    = use_fmha_fp8 ? !use_paged_fmha : true;
 
     // Allocate K/V output buffers only when the kernel actually writes them,
     // avoiding unnecessary GPU memory allocation and zero-fill.

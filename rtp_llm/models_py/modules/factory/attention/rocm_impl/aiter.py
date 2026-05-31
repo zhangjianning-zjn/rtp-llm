@@ -591,8 +591,19 @@ class AiterPrefillAttnOp:
         # Paged path: only when kv_cache is a real paged cache object (has kv_cache_base).
         # When qkv is a tuple (Q, K_padded, V_padded), we always use the varlen unpad path
         # regardless of kv_cache presence — the caller provides K/V explicitly.
-        # NOTE on head_dim=256: aiter.mha_batch_prefill_func supports head_dim in {64,128,256}
-        # since aiter 0.1.13.dev4 (commit 9ed3e3490). No varlen fallback needed here.
+        # Prefer the explicit K/V varlen path when FusedRopeKVCachePrefillOp
+        # returns padded K/V. The paged prefill kernel is faster, but ALGR TA
+        # is sensitive to the decoder hidden-state drift from that path.
+        if (
+            isinstance(qkv, (tuple, list))
+            and len(qkv) == 3
+            and isinstance(qkv[1], torch.Tensor)
+            and isinstance(qkv[2], torch.Tensor)
+            and qkv[1].numel() > 0
+            and qkv[2].numel() > 0
+        ):
+            return self._forward_varlen(qkv, fmha_params)
+
         if kv_cache is not None and hasattr(kv_cache, "kv_cache_base"):
             return self._forward_paged(q_tensor, kv_cache, fmha_params)
 
