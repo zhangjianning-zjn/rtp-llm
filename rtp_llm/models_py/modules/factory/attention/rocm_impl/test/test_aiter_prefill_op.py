@@ -608,11 +608,35 @@ class TestCompactGatherReshape(unittest.TestCase):
         """Create a 2D flat KV cache: [num_blocks, 2*hk*ps*hd]."""
         return torch.randn(num_blocks, 2 * hk * ps * hd, dtype=dtype)
 
+    def _make_compact_bufs(self, block_table, hk, ps, hd, dtype=torch.float16):
+        """Build block_indices, compact_block_table, and compact K/V buffers."""
+        block_indices = block_table.reshape(-1).to(torch.int64)
+        num_gathered = block_indices.numel()
+        compact_block_table = torch.arange(
+            num_gathered, dtype=torch.int32, device=block_table.device
+        ).view_as(block_table)
+        vs = 16 // torch.tensor([], dtype=dtype).element_size()
+        n = num_gathered + 1
+        k_buf = torch.zeros(
+            (n, hk, hd // vs, ps, vs), dtype=dtype, device=block_table.device
+        )
+        v_buf = torch.zeros(
+            (n, hk, ps // vs, hd, vs), dtype=dtype, device=block_table.device
+        )
+        return block_indices, compact_block_table, k_buf, v_buf
+
     def _assert_compact_equiv(self, op, kv_cache, block_table):
         """Assert compact gather plus remap equals full reshape indexed by block_table."""
         k_full, v_full = op._reshape_kv_cache_vectorized(kv_cache)
-        k_compact, v_compact, compact_bt = op._gather_and_reshape_kv_compact(
-            kv_cache, block_table
+        block_indices, compact_bt, k_buf, v_buf = self._make_compact_bufs(
+            block_table,
+            op.head_num_kv,
+            op.tokens_per_block,
+            op.head_dim,
+            kv_cache.dtype,
+        )
+        k_compact, v_compact = op._gather_and_reshape_kv_compact(
+            kv_cache, block_indices, k_buf, v_buf
         )
 
         # Remapped compact K/V should produce the same per-table K/V as the
@@ -644,14 +668,17 @@ class TestCompactGatherReshape(unittest.TestCase):
         op = self._make_op()
         kv = self._make_kv_cache_5d(16, 4, 16, 128)
         bt = torch.tensor([[0, 0, 1], [0, 2, 2]], dtype=torch.int32)
-        k_compact, v_compact, compact_bt = op._gather_and_reshape_kv_compact(kv, bt)
-        # Rows that map to the same original block should have identical data
+        block_indices, compact_bt, k_buf, v_buf = self._make_compact_bufs(
+            bt, 4, 16, 128
+        )
+        k_compact, v_compact = op._gather_and_reshape_kv_compact(
+            kv, block_indices, k_buf, v_buf
+        )
         k_full, _ = op._reshape_kv_cache_vectorized(kv)
         orig_indices = bt.reshape(-1).to(torch.int64)
         torch.testing.assert_close(
             k_compact[compact_bt.reshape(-1).to(torch.int64)], k_full[orig_indices]
         )
-        # All referenced blocks (no dedup) + 1 trailing dummy zero-block
         self.assertEqual(k_compact.shape[0], bt.numel() + 1)
 
     def test_5d_non_contiguous_blocks(self):
@@ -679,13 +706,17 @@ class TestCompactGatherReshape(unittest.TestCase):
         op = self._make_op()
         kv = self._make_kv_cache_2d(16, 4, 16, 128)
         bt = torch.tensor([[0, 0, 1], [0, 2, 2]], dtype=torch.int32)
-        k_compact, v_compact, compact_bt = op._gather_and_reshape_kv_compact(kv, bt)
+        block_indices, compact_bt, k_buf, v_buf = self._make_compact_bufs(
+            bt, 4, 16, 128
+        )
+        k_compact, v_compact = op._gather_and_reshape_kv_compact(
+            kv, block_indices, k_buf, v_buf
+        )
         k_full, _ = op._reshape_kv_cache_vectorized(kv)
         orig_indices = bt.reshape(-1).to(torch.int64)
         torch.testing.assert_close(
             k_compact[compact_bt.reshape(-1).to(torch.int64)], k_full[orig_indices]
         )
-        # All referenced blocks (no dedup) + 1 trailing dummy zero-block
         self.assertEqual(k_compact.shape[0], bt.numel() + 1)
 
     # ---- FP8 fallback: compact should NOT be used -------------------------
@@ -714,9 +745,7 @@ class TestCompactGatherReshape(unittest.TestCase):
         seqlen_k = torch.tensor([16, 33], dtype=torch.int32)
         # Row 0: valid_blocks=ceil(16/16)=1 → only col0 is valid, rest filled with bt[0,0]=3
         # Row 1: valid_blocks=ceil(33/16)=3 → cols 0-2 valid, col3 filled with bt[1,2]=9
-        sanitized = op._sanitize_block_table(
-            bt, block_num=8, seqlen_k=seqlen_k, max_seqlen_k=33
-        )
+        sanitized = op._sanitize_block_table(bt, seqlen_k=seqlen_k, max_seqlen_k=33)
         # Check the first 4 columns (original width) for sanitize correctness.
         first_4 = sanitized[:, :4].tolist()
         self.assertEqual(first_4, [[3, 3, 3, 3], [7, 8, 9, 9]])
