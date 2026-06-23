@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 
+from rtp_llm.device.device_type import DeviceType, get_device_type
 from rtp_llm.models_py.distributed.collective_torch import Group, all_gather
 from rtp_llm.models_py.distributed.deepep_wrapper import (
     DeepEPMode,
@@ -31,6 +32,10 @@ DEEPEP_QUANT_BLOCK_SIZE = 128
 SUPPORTED_HIDDEN_SIZES = [1536, 2048, 2560, 3072, 4096, 5120, 6144, 7168, 8192]
 
 
+def _is_sm90_or_ppu() -> bool:
+    return get_device_type() == DeviceType.Ppu or get_sm()[0] >= 9
+
+
 class DeepEpLowLatencyRouter(FusedMoeDataRouter):
     """
     A data router for Mixture-of-Experts that utilizes deep_ep's low-latency communication primitives.
@@ -50,7 +55,7 @@ class DeepEpLowLatencyRouter(FusedMoeDataRouter):
         )
 
         resolver = MoeConfigResolver()
-        checker.check(get_sm()[0] >= 9)
+        checker.check(_is_sm90_or_ppu())
         checker.check(resolver.is_ep_enabled(config))
         checker.check(resolver.use_low_latency(config))
         checker.check(DeepEPWrapper.supported())

@@ -8,6 +8,7 @@ from rtp_llm.models_py.kernels.cuda.deepgemm_wrapper import (
     m_grouped_bf16_gemm_nt_masked,
     m_grouped_fp8_gemm_nt_masked,
 )
+from rtp_llm.device.device_type import DeviceType, get_device_type
 from rtp_llm.models_py.modules.factory.fused_moe.defs.config_adapter import (
     MoEConfigAdapter,
 )
@@ -32,6 +33,10 @@ from rtp_llm.models_py.utils.memory import dispose_tensor
 from rtp_llm.utils.model_weight import W
 
 
+def _is_sm90_or_ppu() -> bool:
+    return get_device_type() == DeviceType.Ppu or get_sm()[0] >= 9
+
+
 class DeepGemmMaskedExecutor(FusedMoeExpertExecutor):
 
     # The Deep Gemm kernels only support block size of 128
@@ -54,7 +59,7 @@ class DeepGemmMaskedExecutor(FusedMoeExpertExecutor):
         checker.check(resolver.is_bf16(config))
         quant_method = resolver.get_quant_method(config)
         checker.check(quant_method in [None, "FP8_PER_BLOCK"])
-        checker.check(get_sm()[0] >= 9)
+        checker.check(_is_sm90_or_ppu())
 
     def __init__(
         self,

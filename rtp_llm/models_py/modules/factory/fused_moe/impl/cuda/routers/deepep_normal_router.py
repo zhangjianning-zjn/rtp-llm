@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 
+from rtp_llm.device.device_type import DeviceType, get_device_type
 from rtp_llm.models_py.distributed.collective_torch import Group, all_gather
 from rtp_llm.models_py.distributed.deepep_wrapper import (
     DeepEPMode,
@@ -33,6 +34,10 @@ from rtp_llm.models_py.utils.arch import get_sm
 from rtp_llm.ops.compute_ops import trt_fp8_quantize_128
 
 
+def _is_sm90_or_ppu() -> bool:
+    return get_device_type() == DeviceType.Ppu or get_sm()[0] >= 9
+
+
 class DeepepNormalRouterBase(FusedMoeDataRouter):
     """Base class for DeepEP normal routers."""
 
@@ -44,7 +49,7 @@ class DeepepNormalRouterBase(FusedMoeDataRouter):
     def check_conditions(cls, checker: Any, config: MoEConfigAdapter) -> None:
         """Check if DeepepNormalRouter can handle the configuration"""
         resolver = MoeConfigResolver()
-        checker.check(get_sm()[0] >= 9)
+        checker.check(_is_sm90_or_ppu())
         checker.check(resolver.is_ep_enabled(config))
         checker.check(not resolver.use_low_latency(config))
         checker.check(DeepEPWrapper.supported())

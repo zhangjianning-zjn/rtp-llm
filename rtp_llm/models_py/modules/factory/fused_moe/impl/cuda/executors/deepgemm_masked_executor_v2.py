@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
+from rtp_llm.device.device_type import DeviceType, get_device_type
 from rtp_llm.models_py.modules.factory.fused_moe.defs.config_adapter import (
     MoEConfigAdapter,
 )
@@ -17,6 +18,10 @@ from rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_hy
     DeepGemmHybridExecutor,
 )
 from rtp_llm.models_py.utils.arch import get_sm
+
+
+def _is_sm90_or_ppu() -> bool:
+    return get_device_type() == DeviceType.Ppu or get_sm()[0] >= 9
 
 
 class DeepGemmMaskedExecutorV2(DeepGemmHybridExecutor):
@@ -38,7 +43,7 @@ class DeepGemmMaskedExecutorV2(DeepGemmHybridExecutor):
         checker.check(quant_method == "FP8_PER_BLOCK")
         checker.check(resolver.is_bf16(config))
         checker.check(has_deep_gemm())
-        checker.check(get_sm()[0] >= 9)
+        checker.check(_is_sm90_or_ppu())
 
     def __init__(
         self,

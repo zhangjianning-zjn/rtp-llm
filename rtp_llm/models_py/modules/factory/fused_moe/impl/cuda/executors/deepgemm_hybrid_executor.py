@@ -9,6 +9,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+from rtp_llm.device.device_type import DeviceType, get_device_type
 from rtp_llm.models_py.kernels.cuda.deepgemm_wrapper import (
     configure_deep_gemm_num_sms,
     is_deep_gemm_e8m0_used,
@@ -47,6 +48,10 @@ from rtp_llm.ops.compute_ops import trt_fp8_quantize_128
 from rtp_llm.utils.model_weight import W
 
 
+def _is_sm90_or_ppu() -> bool:
+    return get_device_type() == DeviceType.Ppu or get_sm()[0] >= 9
+
+
 def align_up_math(n: int, alignment: int = 128) -> int:
     return int(math.ceil(n / alignment)) * alignment
 
@@ -73,7 +78,7 @@ class DeepGemmHybridExecutor(FusedMoeExpertExecutor):
         checker.check(quant_method == "FP8_PER_BLOCK")
         checker.check(resolver.is_bf16(config))
         checker.check(has_deep_gemm())
-        checker.check(get_sm()[0] >= 9)
+        checker.check(_is_sm90_or_ppu())
         checker.check(not config.enable_cuda_graph)
 
     def __init__(

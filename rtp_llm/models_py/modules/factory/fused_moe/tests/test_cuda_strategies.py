@@ -23,11 +23,14 @@ from rtp_llm.models_py.modules.factory.fused_moe.impl.common.strategy.batched_tr
 )
 from rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.strategy import (
     CudaFp8PerBlockEpNormalStrategy,
+    CudaFp8PerBlockEpLowLatencyStrategy,
     CudaFp8PerBlockNoDPMaskedStrategy,
     CudaFp8PerBlockNoDPStrategy,
     CudaFp8PerBlockPureCPStrategy,
     CudaFp8PerBlockPureDPStrategy,
     CudaFp8PerTensorNoDPStrategy,
+    CudaNoQuantEpLowLatencyStrategy,
+    CudaNoQuantDpNormalStrategy,
     CudaW4a8Int4PerChannelNoDPStrategy,
 )
 from rtp_llm.ops import CPRotateMethod, MoeConfig, ParallelismConfig
@@ -290,6 +293,38 @@ class TestCudaFp8PerBlockNoDPMaskedStrategy(unittest.TestCase):
         strategy = CudaFp8PerBlockNoDPMaskedStrategy()
         self.assertTrue(strategy.can_handle(config))
 
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_masked_executor_v2.get_device_type",
+        create=True,
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_masked_executor_v2.get_sm"
+    )
+    @patch("rtp_llm.models_py.kernels.cuda.deepgemm_wrapper.has_deep_gemm")
+    def test_can_handle_ppu_sm_below_90(
+        self,
+        mock_has_deep_gemm: Any,
+        mock_get_sm: Any,
+        mock_get_device_type: Any,
+    ) -> None:
+        """PPU should be accepted by the masked DeepGEMM executor below SM90."""
+        mock_has_deep_gemm.return_value = True
+        mock_get_sm.return_value = (8, 0)
+        mock_get_device_type.return_value = DeviceType.Ppu
+
+        config = create_moe_config_adapter(
+            model_config=create_model_config_with_fp8_block_quant(),
+            parallelism_config=create_parallelism_config(
+                ep_size=1, tp_size=1, dp_size=1
+            ),
+            moe_config=create_moe_config(
+                use_all_gather=True, moe_strategy="fp8_per_block_no_dp_masked"
+            ),
+        )
+
+        strategy = CudaFp8PerBlockNoDPMaskedStrategy()
+        self.assertTrue(strategy.can_handle(config))
+
     def test_priority(self) -> None:
         """Test priority"""
         strategy = CudaFp8PerBlockNoDPMaskedStrategy()
@@ -428,15 +463,32 @@ class TestCudaFp8PerBlockEpNormalStrategy(unittest.TestCase):
 
     @patch("rtp_llm.models_py.distributed.deepep_wrapper.DeepEPWrapper.supported")
     @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_hybrid_executor.get_device_type"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_hybrid_executor.get_sm"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_normal_router.get_device_type"
+    )
+    @patch(
         "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_normal_router.get_sm"
     )
     @patch("rtp_llm.models_py.kernels.cuda.deepgemm_wrapper.has_deep_gemm")
     def test_can_handle_false_sm_below_90(
-        self, mock_has_deep_gemm: Any, mock_get_sm: Any, mock_supported: Any
+        self,
+        mock_has_deep_gemm: Any,
+        mock_router_get_sm: Any,
+        mock_router_get_device_type: Any,
+        mock_executor_get_sm: Any,
+        mock_executor_get_device_type: Any,
+        mock_supported: Any,
     ) -> None:
         """Test case when SM < 9.0 (should fail, requires Hopper or newer)"""
         mock_has_deep_gemm.return_value = True
         mock_supported.return_value = True
+        mock_router_get_device_type.return_value = DeviceType.Cuda
+        mock_executor_get_device_type.return_value = DeviceType.Cuda
 
         config = create_moe_config_adapter(
             model_config=create_model_config_with_fp8_block_quant(),
@@ -448,11 +500,57 @@ class TestCudaFp8PerBlockEpNormalStrategy(unittest.TestCase):
         )
 
         strategy = CudaFp8PerBlockEpNormalStrategy()
-        mock_get_sm.return_value = (8, 9)  # SM 8.9 (Ampere/Ada)
+        mock_router_get_sm.return_value = (8, 9)  # SM 8.9 (Ampere/Ada)
+        mock_executor_get_sm.return_value = (8, 9)
         self.assertFalse(strategy.can_handle(config))
 
         # Verify it works with SM 9.0+
-        mock_get_sm.return_value = (9, 0)
+        mock_router_get_sm.return_value = (9, 0)
+        mock_executor_get_sm.return_value = (9, 0)
+        self.assertTrue(strategy.can_handle(config))
+
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_hybrid_executor.get_device_type",
+        create=True,
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_hybrid_executor.get_sm"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_normal_router.get_device_type"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_normal_router.get_sm"
+    )
+    @patch("rtp_llm.models_py.distributed.deepep_wrapper.DeepEPWrapper.supported")
+    @patch("rtp_llm.models_py.kernels.cuda.deepgemm_wrapper.has_deep_gemm")
+    def test_can_handle_ppu_sm_below_90(
+        self,
+        mock_has_deep_gemm: Any,
+        mock_supported: Any,
+        mock_router_get_sm: Any,
+        mock_router_get_device_type: Any,
+        mock_executor_get_sm: Any,
+        mock_executor_get_device_type: Any,
+    ) -> None:
+        """PPU FP8 normal DeepEP should be accepted below SM90."""
+        mock_has_deep_gemm.return_value = True
+        mock_supported.return_value = True
+        mock_router_get_sm.return_value = (8, 0)
+        mock_router_get_device_type.return_value = DeviceType.Ppu
+        mock_executor_get_sm.return_value = (8, 0)
+        mock_executor_get_device_type.return_value = DeviceType.Ppu
+
+        config = create_moe_config_adapter(
+            model_config=create_model_config_with_fp8_block_quant(),
+            parallelism_config=create_parallelism_config(
+                ep_size=8, tp_size=1, dp_size=8
+            ),
+            moe_config=create_moe_config(use_deepep_low_latency=False),
+            enable_cuda_graph=False,
+        )
+
+        strategy = CudaFp8PerBlockEpNormalStrategy()
         self.assertTrue(strategy.can_handle(config))
 
     def test_priority(self) -> None:
@@ -508,6 +606,131 @@ class TestCudaFp8PerTensorNoDPStrategy(unittest.TestCase):
         self.assertEqual(attributes.router_class.router_type(), router_type)
         self.assertEqual(attributes.executor_class.executor_type(), executor_type)
         self.assertEqual(strategy.priority, expected_priority)
+
+
+class TestCudaFp8PerBlockEpLowLatencyStrategy(unittest.TestCase):
+    """Test CUDA FP8 PerBlock EP Low Latency strategy"""
+
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_masked_executor.get_device_type",
+        create=True,
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_masked_executor.get_sm"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_low_latency_router.get_device_type"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_low_latency_router.get_sm"
+    )
+    @patch("rtp_llm.models_py.distributed.deepep_wrapper.DeepEPWrapper.supported")
+    @patch("rtp_llm.models_py.kernels.cuda.deepgemm_wrapper.has_deep_gemm")
+    def test_can_handle_ppu_sm_below_90(
+        self,
+        mock_has_deep_gemm: Any,
+        mock_supported: Any,
+        mock_router_get_sm: Any,
+        mock_router_get_device_type: Any,
+        mock_executor_get_sm: Any,
+        mock_executor_get_device_type: Any,
+    ) -> None:
+        """PPU FP8 low-latency DeepEP should be accepted below SM90."""
+        mock_has_deep_gemm.return_value = True
+        mock_supported.return_value = True
+        mock_router_get_sm.return_value = (8, 0)
+        mock_router_get_device_type.return_value = DeviceType.Ppu
+        mock_executor_get_sm.return_value = (8, 0)
+        mock_executor_get_device_type.return_value = DeviceType.Ppu
+
+        config = create_moe_config_adapter(
+            model_config=create_model_config_with_fp8_block_quant(),
+            parallelism_config=create_parallelism_config(
+                ep_size=8, tp_size=1, dp_size=8
+            ),
+            moe_config=create_moe_config(use_deepep_low_latency=True),
+            enable_cuda_graph=False,
+        )
+
+        strategy = CudaFp8PerBlockEpLowLatencyStrategy()
+        self.assertTrue(strategy.can_handle(config))
+
+
+class TestCudaNoQuantEpLowLatencyStrategy(unittest.TestCase):
+    """Test CUDA no-quant EP Low Latency strategy"""
+
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_masked_executor.get_device_type",
+        create=True,
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.executors.deepgemm_masked_executor.get_sm"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_low_latency_router.get_device_type"
+    )
+    @patch(
+        "rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_low_latency_router.get_sm"
+    )
+    @patch("rtp_llm.models_py.distributed.deepep_wrapper.DeepEPWrapper.supported")
+    @patch("rtp_llm.models_py.kernels.cuda.deepgemm_wrapper.has_deep_gemm")
+    def test_can_handle_ppu_sm_below_90(
+        self,
+        mock_has_deep_gemm: Any,
+        mock_supported: Any,
+        mock_router_get_sm: Any,
+        mock_router_get_device_type: Any,
+        mock_executor_get_sm: Any,
+        mock_executor_get_device_type: Any,
+    ) -> None:
+        """PPU no-quant low-latency DeepEP should be accepted below SM90."""
+        mock_has_deep_gemm.return_value = True
+        mock_supported.return_value = True
+        mock_router_get_sm.return_value = (8, 0)
+        mock_router_get_device_type.return_value = DeviceType.Ppu
+        mock_executor_get_sm.return_value = (8, 0)
+        mock_executor_get_device_type.return_value = DeviceType.Ppu
+
+        model_config = create_model_config_without_quant()
+        model_config.data_type = "bf16"
+        config = create_moe_config_adapter(
+            model_config=model_config,
+            parallelism_config=create_parallelism_config(
+                ep_size=8, tp_size=1, dp_size=8
+            ),
+            moe_config=create_moe_config(use_deepep_low_latency=True),
+            enable_cuda_graph=False,
+        )
+
+        strategy = CudaNoQuantEpLowLatencyStrategy()
+        self.assertTrue(strategy.can_handle(config))
+
+
+class TestCudaNoQuantDpNormalStrategy(unittest.TestCase):
+    """Test CUDA no-quant DeepEP normal strategy"""
+
+    @patch("rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_normal_router.get_device_type")
+    @patch("rtp_llm.models_py.modules.factory.fused_moe.impl.cuda.routers.deepep_normal_router.get_sm")
+    @patch("rtp_llm.models_py.distributed.deepep_wrapper.DeepEPWrapper.supported")
+    def test_can_handle_ppu_pure_dp_ep(
+        self, mock_supported: Any, mock_get_sm: Any, mock_get_device_type: Any
+    ) -> None:
+        """PPU no-quant DP+EP should use DeepEP normal even when SM is below 90."""
+        mock_supported.return_value = True
+        mock_get_sm.return_value = (8, 0)
+        mock_get_device_type.return_value = DeviceType.Ppu
+
+        config = create_moe_config_adapter(
+            model_config=create_model_config_without_quant(),
+            parallelism_config=create_parallelism_config(
+                ep_size=8, tp_size=1, dp_size=8
+            ),
+            moe_config=create_moe_config(use_deepep_low_latency=False),
+            enable_cuda_graph=False,
+        )
+
+        strategy = CudaNoQuantDpNormalStrategy()
+        self.assertTrue(strategy.can_handle(config))
 
 
 class TestCudaW4a8Int4PerChannelNoDPStrategy(unittest.TestCase):

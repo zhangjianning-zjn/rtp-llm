@@ -513,6 +513,9 @@ class DeepEPWrapper:
                 init_kwargs["use_fabric"] = True
             else:
                 init_kwargs["allow_mnnvl"] = False
+        
+        if get_device_type() == DeviceType.Ppu:
+            init_kwargs.pop("allow_mnnvl", None)
 
         return DeepEPBuffer(**init_kwargs)  # type: ignore
 
@@ -554,6 +557,9 @@ class DeepEPWrapper:
                 init_kwargs["allow_mnnvl"] = True
             else:
                 init_kwargs["allow_mnnvl"] = False
+
+        if get_device_type() == DeviceType.Ppu:
+            init_kwargs.pop("allow_mnnvl", None)
 
         return DeepEPBuffer(**init_kwargs)  # type: ignore
 
@@ -600,6 +606,9 @@ class DeepEPWrapper:
         if self._use_accl_ep:
             init_kwargs["allow_nvlink_for_low_latency_mode"] = True
             init_kwargs["allow_mnnvl"] = False
+
+        if get_device_type() == DeviceType.Ppu:
+            init_kwargs.pop("allow_mnnvl", None)
 
         return DeepEPBuffer(**init_kwargs)  # type: ignore
 
