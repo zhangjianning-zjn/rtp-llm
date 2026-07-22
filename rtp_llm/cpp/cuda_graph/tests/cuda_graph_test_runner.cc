@@ -47,7 +47,8 @@ public:
                      int64_t          max_seq_len,
                      int64_t          tokens_per_block,
                      int64_t          kernel_tokens_per_block,
-                     std::vector<int> decode_capture_batch_sizes) {
+                     std::vector<int> decode_capture_batch_sizes,
+                     int64_t          kv_cache_group_num) {
         reset_runner();
         GraphParams params;
         params.enable_cuda_graph_debug_mode = false;
@@ -61,7 +62,7 @@ public:
         params.max_context_batch_size       = 128;
         params.decode_capture_batch_sizes   = std::move(decode_capture_batch_sizes);
         params.kv_cache_layer_to_group      = {};  // test: no hybrid kv cache
-        params.kv_cache_group_num           = 0;
+        params.kv_cache_group_num           = static_cast<int32_t>(kv_cache_group_num);
 
         runner_ = CudaGraphRunner::createForDecode(std::move(py_instance), std::move(params));
     }
@@ -157,7 +158,8 @@ PYBIND11_MODULE(libtest_cuda_graph_runner, m) {
              py::arg("max_seq_len"),
              py::arg("tokens_per_block"),
              py::arg("kernel_tokens_per_block"),
-             py::arg("decode_capture_batch_sizes"))
+             py::arg("decode_capture_batch_sizes"),
+             py::arg("kv_cache_group_num") = 0)
         .def("init_target_verify",
              &CudaGraphTestRunner::init_target_verify,
              py::arg("py_instance"),

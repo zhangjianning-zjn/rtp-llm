@@ -500,33 +500,38 @@ bool CudaGraphRunner::canReplaySelectedGraph(const PyModelInputs& inputs, const 
         return false;
     }
 
-    const auto& source_device_groups   = inputs.attention_inputs.kv_cache_kernel_block_id_device_by_group;
-    const auto& source_host_groups     = inputs.attention_inputs.kv_cache_kernel_block_id_by_group;
-    const auto& captured_device_groups = captured_attn.kv_cache_kernel_block_id_device_by_group;
-    const auto& captured_host_groups   = captured_attn.kv_cache_kernel_block_id_by_group;
-    if (source_device_groups.size() != source_host_groups.size()
-        || source_device_groups.size() != captured_device_groups.size()
-        || source_device_groups.size() != captured_host_groups.size()) {
-        RTP_LLM_LOG_WARNING("CUDA graph hybrid block table group mismatch: source_device=%zu, source_host=%zu, "
-                            "captured_device=%zu, captured_host=%zu; fallback to normal run",
-                            source_device_groups.size(),
-                            source_host_groups.size(),
-                            captured_device_groups.size(),
-                            captured_host_groups.size());
-        return false;
-    }
-    for (size_t group = 0; group < source_device_groups.size(); ++group) {
-        if (!validateBlockTableForCudaGraph(source_device_groups[group],
-                                            captured_device_groups[group],
-                                            state.current_batch_size,
-                                            true,
-                                            "hybrid device")
-            || !validateBlockTableForCudaGraph(source_host_groups[group],
-                                               captured_host_groups[group],
-                                               state.current_batch_size,
-                                               false,
-                                               "hybrid host")) {
+    // Runtime inputs retain a singleton *_by_group view for ordinary one-group
+    // models, while capture intentionally represents group 0 through the flat
+    // tables above. Only multi-group captures require grouped table parity.
+    if (kv_cache_group_num_ > 1) {
+        const auto& source_device_groups   = inputs.attention_inputs.kv_cache_kernel_block_id_device_by_group;
+        const auto& source_host_groups     = inputs.attention_inputs.kv_cache_kernel_block_id_by_group;
+        const auto& captured_device_groups = captured_attn.kv_cache_kernel_block_id_device_by_group;
+        const auto& captured_host_groups   = captured_attn.kv_cache_kernel_block_id_by_group;
+        if (source_device_groups.size() != source_host_groups.size()
+            || source_device_groups.size() != captured_device_groups.size()
+            || source_device_groups.size() != captured_host_groups.size()) {
+            RTP_LLM_LOG_WARNING("CUDA graph hybrid block table group mismatch: source_device=%zu, source_host=%zu, "
+                                "captured_device=%zu, captured_host=%zu; fallback to normal run",
+                                source_device_groups.size(),
+                                source_host_groups.size(),
+                                captured_device_groups.size(),
+                                captured_host_groups.size());
             return false;
+        }
+        for (size_t group = 0; group < source_device_groups.size(); ++group) {
+            if (!validateBlockTableForCudaGraph(source_device_groups[group],
+                                                captured_device_groups[group],
+                                                state.current_batch_size,
+                                                true,
+                                                "hybrid device")
+                || !validateBlockTableForCudaGraph(source_host_groups[group],
+                                                   captured_host_groups[group],
+                                                   state.current_batch_size,
+                                                   false,
+                                                   "hybrid host")) {
+                return false;
+            }
         }
     }
     return true;

@@ -146,7 +146,7 @@ class TestCudaGraphTargetVerifyPadding(unittest.TestCase):
         self.runner.initDeviceLengthInputs(inputs)
         return inputs
 
-    def _build_decode_replay_inputs(self, block_table_rows):
+    def _build_decode_replay_inputs(self, block_table_rows, with_singleton_group=False):
         batch_size = 6
         block_num = (
             self.max_seq_len + self.kernel_tokens_per_block - 1
@@ -182,6 +182,11 @@ class TestCudaGraphTargetVerifyPadding(unittest.TestCase):
         ).reshape(block_table_rows, block_num)
         attn.kv_cache_kernel_block_id_device = block_ids
         attn.kv_cache_kernel_block_id = block_ids.cpu().pin_memory()
+        if with_singleton_group:
+            attn.kv_cache_kernel_block_id_device_by_group = [
+                attn.kv_cache_kernel_block_id_device
+            ]
+            attn.kv_cache_kernel_block_id_by_group = [attn.kv_cache_kernel_block_id]
         attn.kv_cache_block_id_device = block_ids
         attn.kv_cache_block_id = attn.kv_cache_kernel_block_id
         attn.padding_offset = torch.zeros(batch_size, dtype=torch.int32, device="cuda")
@@ -274,6 +279,39 @@ class TestCudaGraphTargetVerifyPadding(unittest.TestCase):
         )
         try:
             inputs = self._build_decode_replay_inputs(block_table_rows=16)
+            self.assertTrue(runner.canRun(inputs))
+
+            outputs = runner.forward(inputs)
+            torch.cuda.synchronize()
+
+            self.assertEqual(runner.getCurrentRealGraphSize(), 8)
+            torch.testing.assert_close(
+                outputs.hidden_states,
+                torch.ones_like(outputs.hidden_states),
+            )
+            self.assertEqual(
+                model.replay_metadata["block_table_head"],
+                self._expected_live_block_table_head(),
+            )
+        finally:
+            runner.reset()
+
+    def test_single_group_decode_replay_uses_flat_capture_table(self):
+        model = _DummyModel()
+        runner = CudaGraphRunner()
+        runner.init_decode(
+            model,
+            self.hidden_size,
+            self.max_seq_len,
+            self.tokens_per_block,
+            self.kernel_tokens_per_block,
+            [8],
+            1,
+        )
+        try:
+            inputs = self._build_decode_replay_inputs(
+                block_table_rows=16, with_singleton_group=True
+            )
             self.assertTrue(runner.canRun(inputs))
 
             outputs = runner.forward(inputs)
