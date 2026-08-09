@@ -324,6 +324,7 @@ struct PyAttentionInputs {
 
     // Headwise attention config (Python dict or None).
     py::object headwise_config{py::none()};
+    py::object fmha_config{py::none()};
 };
 
 struct BertEmbeddingInputs {

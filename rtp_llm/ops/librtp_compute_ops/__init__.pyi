@@ -245,6 +245,7 @@ class PyAttentionInputs:
     sequence_lengths_plus_1_device: torch.Tensor
     total_tokens: int
     headwise_config: dict | None
+    fmha_config: object | None
     kv_cache_kernel_block_id: torch.Tensor
     kv_cache_kernel_block_id_device: torch.Tensor
     kv_cache_block_id: torch.Tensor

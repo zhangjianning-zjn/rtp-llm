@@ -35,7 +35,6 @@ if device_type == DeviceType.ROCm:
         AiterDecodeImplAsm,
         AiterDecodeImplNonAsm,
         AiterDecodeImplTriton,
-        AiterDecodeImplTritonLinear,
         AiterPrefillImplAsm,
         AiterPrefillImplNonAsm,
         AiterPrefillImplPaged,
@@ -47,9 +46,7 @@ if device_type == DeviceType.ROCm:
     PREFILL_MHA_IMPS.append(AiterPrefillImplPaged)
     PREFILL_MHA_IMPS.append(AiterPrefillImplAsm)
     PREFILL_MHA_IMPS.append(AiterPrefillImplNonAsm)
-    # Keep the Triton reader matched to the prefill writer.
     DECODE_MHA_IMPS.append(AiterDecodeImplTriton)
-    DECODE_MHA_IMPS.append(AiterDecodeImplTritonLinear)
     DECODE_MHA_IMPS.append(AiterDecodeImplAsm)
     DECODE_MHA_IMPS.append(AiterDecodeImplNonAsm)
 else:

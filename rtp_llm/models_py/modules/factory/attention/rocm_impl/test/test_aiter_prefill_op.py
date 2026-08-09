@@ -21,6 +21,7 @@ on the rest of the fleet.
 import math
 import unittest
 from typing import List, Optional, Sequence
+from unittest.mock import patch
 
 import torch
 import torch.nn.functional as F
@@ -35,16 +36,21 @@ except ImportError:
     _AITER_AVAILABLE = False
 
 try:
+    from rtp_llm.models_py.modules.factory.attention import attn_factory
     from rtp_llm.models_py.modules.factory.attention.rocm_impl.aiter import (
+        AiterDecodeAttnOpBase,
+        AiterDecodeImplNonAsm,
         AiterPrefillAttnOp,
         AiterPrefillAttnOpPaged,
         AiterPrefillImplAsm,
         AiterPrefillImplNonAsm,
         AiterPrefillImplPaged,
         FMHAParams,
+        validate_v_layout,
     )
     from rtp_llm.ops import (
         AttentionConfigs,
+        FMHAConfig,
         KvCacheDataType,
         PyAttentionInputs,
         RopeConfig,
@@ -1792,6 +1798,35 @@ class TestAiterPrefillImplMropePositionIds(unittest.TestCase):
 
     def test_nonasm_mrope_matches_reference(self):
         self._check_mrope_matches_reference(AiterPrefillImplNonAsm)
+
+
+@unittest.skipUnless(_is_rocm() and _OPS_IMPORTABLE, "Requires ROCm attention wrappers")
+class TestVLayoutContract(unittest.TestCase):
+    def test_validation_and_packed_cache(self):
+        config = _make_attn_configs(8, 2, 100, 32)
+        config.need_rope_kv_cache = True
+        inputs = PyAttentionInputs()
+        inputs.is_prefill = True
+        with self.assertRaisesRegex(ValueError, "V geometry"):
+            validate_v_layout(config, inputs, FMHAConfig())
+
+        config.size_per_head = 256
+        inputs.is_prefill = False
+        flags = FMHAConfig()
+        flags.use_aiter_pa, flags.use_asm_pa, flags.use_triton_pa = True, True, False
+        with patch.object(
+            AiterDecodeImplNonAsm, "__init__"
+        ) as init, self.assertRaisesRegex(ValueError, "layout mismatch"):
+            attn_factory.get_fmha_impl(config, None, inputs, fmha_config=flags)
+        init.assert_not_called()
+
+        config.size_per_head, config.kernel_tokens_per_block = 128, 16
+        op = AiterDecodeAttnOpBase(config)
+        elems = 2 * 2 * 16 * 128
+        packed = torch.zeros(2, elems + 4)
+        unpacked = op.reshape_kv_cache(packed)
+        self.assertEqual(unpacked.shape, (2, 2, 2, 16, 128))
+        self.assertEqual(unpacked.data_ptr(), packed.data_ptr())
 
 
 if __name__ == "__main__":

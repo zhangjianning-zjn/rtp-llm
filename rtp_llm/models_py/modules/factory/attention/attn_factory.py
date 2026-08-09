@@ -25,10 +25,7 @@ DECODE_MHA_IMPS: List[type[FMHAImplBase]] = []
 PREFILL_MLA_IMPS: List[type[MlaImplBase]] = []
 DECODE_MLA_IMPS: List[type[MlaImplBase]] = []
 
-# Set by device-specific registration for phase-wide checks.
-VALIDATE_FMHA_CONFIG: Optional[
-    Callable[[AttentionConfigs, PyAttentionInputs, Optional[FMHAConfig]], None]
-] = None
+VALIDATE_FMHA_CONFIG: Optional[Callable[..., None]] = None
 
 FLASHINFER_TRTLLM_GEN_IMPLS = {
     "FlashInferTRTLLMPrefillImpl",
@@ -98,16 +95,13 @@ def get_mla_impl(
 
 
 def _is_fmha_impl_disabled(
-    impl: type[FMHAImplBase],
-    fmha_config: Optional[FMHAConfig],
-    attn_configs: AttentionConfigs,
+    impl_class_name: str, fmha_config: Optional[FMHAConfig]
 ) -> bool:
     """Check if a FMHA implementation is disabled in fmha_config.
 
     Args:
-        impl: The implementation class
+        impl_class_name: The implementation class name
         fmha_config: The FMHA config, if None, assume not disabled
-        attn_configs: Attention configuration
 
     Returns:
         True if the FMHA implementation is disabled, False otherwise
@@ -115,7 +109,6 @@ def _is_fmha_impl_disabled(
     if fmha_config is None:
         return False
 
-    impl_class_name = impl.__name__
     # XQA implementations
     if "XQA" in impl_class_name:
         return not fmha_config.enable_xqa
@@ -147,11 +140,9 @@ def _is_fmha_impl_disabled(
         or "AiterDecodeImplNonAsm" in impl_class_name
     ):
         return not fmha_config.use_aiter_pa
-    # Select the Triton reader matching the prefill V layout.
+    # Aiter Triton implementations
     elif "AiterDecodeImplTriton" in impl_class_name:
-        return not fmha_config.use_triton_pa or not impl.reads_the_written_layout(
-            attn_configs, fmha_config
-        )
+        return not fmha_config.use_triton_pa
     # Default: not disabled
     return False
 
@@ -168,6 +159,7 @@ def get_fmha_impl(
 ) -> FMHAImplBase:
     # Set is_cuda_graph as dynamic attribute on attn_inputs for base class to read
     attn_inputs.is_cuda_graph = is_cuda_graph
+    attn_inputs.fmha_config = fmha_config
 
     mha_impls = PREFILL_MHA_IMPS if attn_inputs.is_prefill else DECODE_MHA_IMPS
     if VALIDATE_FMHA_CONFIG is not None:
@@ -175,7 +167,7 @@ def get_fmha_impl(
 
     for impl in mha_impls:
         # Skip if this FMHA implementation is disabled in config
-        if _is_fmha_impl_disabled(impl, fmha_config, attn_configs):
+        if _is_fmha_impl_disabled(impl.__name__, fmha_config):
             continue
 
         # Check support before creating instance
@@ -188,18 +180,15 @@ def get_fmha_impl(
         try:
             instance = impl(attn_configs, attn_inputs, parallelism_config)
         except Exception as e:
-            if not impl.interchangeable:
+            if not getattr(impl, "interchangeable", True):
                 raise
             logging.warning(f"Failed to instantiate {impl.__name__}: {e}")
             continue
 
         if not is_cuda_graph or instance.support_cuda_graph():
             return instance
-        if not impl.interchangeable:
-            raise ValueError(
-                f"{impl.__name__} cannot be captured in a CUDA graph and cannot be "
-                "replaced; disable CUDA graph for this phase."
-            )
+        if not getattr(impl, "interchangeable", True):
+            raise ValueError(f"{impl.__name__} does not support CUDA graph")
         logging.warning(f"Skipping {impl.__name__}: no CUDA graph support")
     if (
         attn_configs.rope_config.style == RopeStyle.Mrope

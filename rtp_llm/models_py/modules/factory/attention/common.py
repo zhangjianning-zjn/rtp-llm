@@ -20,7 +20,14 @@ def reshape_paged_kv_cache(
     tokens_per_block: int,
     head_dim: int,
 ) -> torch.Tensor:
-    """Unpack a raw 2D hybrid cache's full-attention prefix; pass 5D caches through."""
+    """Reshape a raw 2D packed per-layer KV cache buffer into the 5D paged format.
+
+    In hybrid cache mode the per-layer tensor arrives as a raw 2D buffer
+    [block_num, kv_block_stride_elems].  The hybrid stride is
+    max(full_attn, linear_attn), so we slice the prefix used by full-attention
+    layers and reshape to [block_num, 2, num_kv_heads, tokens_per_block, head_dim].
+    If the tensor is already multi-dimensional it is returned as-is.
+    """
     if paged_kv_cache.dim() != 2:
         return paged_kv_cache
     block_num = paged_kv_cache.shape[0]
