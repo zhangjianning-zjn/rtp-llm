@@ -1,6 +1,5 @@
-import logging
 import math
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import aiter
 import torch
@@ -8,13 +7,13 @@ import torch
 from rtp_llm.models_py.modules.factory.attention import common
 from rtp_llm.models_py.modules.factory.attention.fmha_impl_base import FMHAImplBase
 from rtp_llm.models_py.modules.factory.attention.rocm_impl._attn_utils import (
-    reshape_kv_cache_vectorized,
     split_qkv_fp8,
     split_raw_qkv,
     unpad_kv_vectorized,
 )
 from rtp_llm.ops import (
     AttentionConfigs,
+    FMHAConfig,
     FMHAType,
     KvCacheDataType,
     ParallelismConfig,
@@ -38,6 +37,100 @@ def _is_mrope_interleaved_supported(attn_configs: AttentionConfigs) -> bool:
         attn_configs.rope_config.style == RopeStyle.Mrope
         and not attn_configs.rope_config.mrope_interleaved
     )
+
+
+# aiter rejects anything else itself: pa_fwd_asm reaches an
+# AITER_CHECK(head_size == 128) in asm_pa.cu.
+ASM_DECODE_HEAD_SIZES = {128}
+
+# Non-ASM decode indexes pages inside a partition, so the page has to divide it. This
+# is the worst case on purpose: the atrex branch uses 512 and constrains the page not
+# at all, but its guard includes max_seq_len, which FMHAParams recomputes from the
+# batch every step. One deployment therefore serves short requests through atrex and
+# switches here the moment a request crosses 16384 tokens, so validating against 512
+# would only move the failure to that request.
+NONASM_DECODE_PARTITION = 256
+
+
+def prefill_writes_vectorized_v(
+    attn_configs: AttentionConfigs, fmha_config: Optional[FMHAConfig]
+) -> bool:
+    """ASM always writes vectorized V; non-ASM does so only for FP8."""
+    return (
+        fmha_config is None
+        or fmha_config.use_asm_pa
+        or attn_configs.kv_cache_dtype == KvCacheDataType.FP8
+    )
+
+
+def validate_v_layout(
+    attn_configs: AttentionConfigs,
+    attn_inputs: PyAttentionInputs,
+    fmha_config: Optional[FMHAConfig],
+) -> None:
+    """Validate vector geometry and, for decode, the shared V-layout contract."""
+    if (
+        not attn_configs.need_rope_kv_cache
+        # support() empties both phases, so leave the factory's MRoPE error standing.
+        or not _is_mrope_interleaved_supported(attn_configs)
+    ):
+        return
+    page = attn_configs.kernel_tokens_per_block
+    head = attn_configs.size_per_head
+    fp8 = attn_configs.kv_cache_dtype == KvCacheDataType.FP8
+    # Cache element size, not activation dtype, determines the vector width.
+    width = 16 if fp8 else 8
+    if head % width:
+        raise ValueError(f"head_dim={head} is invalid for {width}-element vectors")
+    # CK prefill groups V by page / width even for the linear physical layout.
+    if page <= 0 or page % width:
+        raise ValueError(
+            f"page={page} is invalid for {width}-element vectors; set "
+            f"--kernel_seq_size_per_block to a multiple of {width}"
+        )
+
+    block_id = attn_inputs.kv_cache_kernel_block_id
+    if block_id is None or not block_id.numel():
+        return
+    asm = fmha_config is None or fmha_config.use_asm_pa
+    triton = fmha_config is None or fmha_config.use_triton_pa
+    aiter_pa = fmha_config is None or fmha_config.use_aiter_pa
+    asm_decode = asm and head in ASM_DECODE_HEAD_SIZES
+    if not (asm or aiter_pa) or not (triton or aiter_pa or asm_decode):
+        return
+    prefill_vec = prefill_writes_vectorized_v(attn_configs, fmha_config)
+    decode_vec = prefill_vec if triton else asm_decode
+    is_prefill = attn_inputs.is_prefill
+    # A prefill-only role has no decode reader to pair. Decode-side selection
+    # enforces the shared prefill/decode layout contract.
+    if not is_prefill and prefill_vec != decode_vec and not (fp8 and page == width):
+        # With one vector per page, both layouts have the same offsets.
+        alt = (
+            f", or --kernel_seq_size_per_block={width}"
+            if fp8
+            else ", or --use_asm_pa 0"
+        )
+        raise ValueError(
+            "ROCm KV-cache V layout mismatch: prefill writes "
+            f"{'vectorized' if prefill_vec else 'linear'} V and decode reads "
+            f"{'vectorized' if decode_vec else 'linear'} at width={width} page={page} "
+            f"size_per_head={head} dtype={attn_configs.kv_cache_dtype} "
+            f"aiter/asm/triton_pa={int(aiter_pa)}/{int(asm)}/{int(triton)}; align the "
+            f"PA flags with --use_triton_pa 1{alt}"
+        )
+    if (
+        not is_prefill
+        and not decode_vec
+        and not triton
+        and NONASM_DECODE_PARTITION % page
+    ):
+        raise ValueError(
+            f"page={page} must divide the {NONASM_DECODE_PARTITION}-token partition "
+            "non-ASM decode indexes within; requests past 16384 tokens land on that "
+            "partition even where shorter ones do not, so it is checked up front. Set "
+            "--kernel_seq_size_per_block to a power of two no larger than "
+            f"{NONASM_DECODE_PARTITION}"
+        )
 
 
 # Pure Python implementation of FMHAParams
@@ -903,6 +996,10 @@ def _run_triton_paged_attention(
     num_kv_heads: int,
     context_partition_size: int,
     kv_scale_buf: Optional[torch.Tensor] = None,
+    *,
+    # No default: the reader has to match the writer, and that pairing is only
+    # visible at the call site.
+    linear_v: bool,
 ) -> torch.Tensor:
     key_cache = paged_kv_cache.select(1, 0)
     value_cache = paged_kv_cache.select(1, 1)
@@ -913,9 +1010,13 @@ def _run_triton_paged_attention(
     key_cache = key_cache.view(
         kv_sizes[0], kv_sizes[1], kv_sizes[3] // x, kv_sizes[2], x
     )
-    # V: [N, nkv, ps, hd] -> [N, nkv, ps//x, hd, x]  (VALUE_TRANSPOSED=True path)
-    # 5D view doesn't alter the [ps, hd] memory order, so no copy is needed.
-    value_cache = value_cache.view(kv_sizes[0], kv_sizes[1], kv_sizes[2] // x, kv_sizes[3], x)
+    # V rank picks the layout: 4D linear, 5D VALUE_TRANSPOSED, same bytes either
+    # way, so neither view copies (pa_decode_gluon_aot.cpp:222).
+    value_cache = value_cache.view(
+        (kv_sizes[0], kv_sizes[1], kv_sizes[3], kv_sizes[2])
+        if linear_v
+        else (kv_sizes[0], kv_sizes[1], kv_sizes[2] // x, kv_sizes[3], x)
+    )
 
     key_scale, value_scale = None, None
     if kv_scale_base is not None:
@@ -1032,12 +1133,14 @@ def _run_triton_paged_attention(
 
 
 class AiterPrefillAttnOpTriton:
-    def __init__(self, attn_configs: AttentionConfigs):
+    def __init__(self, attn_configs: AttentionConfigs, *, linear_v: bool):
         self.head_num = attn_configs.head_num
         self.head_dim = attn_configs.size_per_head
         self.head_num_kv = attn_configs.kv_head_num
         self.context_partition_size = 256
         self.alloc_scale = attn_configs.kv_cache_dtype == KvCacheDataType.FP8
+        # Must equal the V layout the host impl's rope writer produces.
+        self.linear_v = linear_v
 
     def support(self, attn_inputs: PyAttentionInputs) -> bool:
         has_prefix = (
@@ -1085,6 +1188,7 @@ class AiterPrefillAttnOpTriton:
             self.head_num_kv,
             self.context_partition_size,
             kv_scale_buf=fmha_params.kv_scale,
+            linear_v=self.linear_v,
         )
 
         if token_num != real_token_num:
@@ -1154,6 +1258,7 @@ class AiterDecodeAttnOpBase:
         return torch.empty_like(query)
 
     def reshape_kv_cache(self, paged_kv_cache):
+        # A no-op on the 5D cache; it is the hybrid 2D packed buffer this unpacks.
         return common.reshape_paged_kv_cache(
             paged_kv_cache, self.head_num_kv, self.tokens_per_block, self.head_dim
         )
@@ -1171,8 +1276,9 @@ class AiterDecodeAttnOpAsm(AiterDecodeAttnOpBase):
     ) -> torch.Tensor:
         seq_lens = fmha_params.seq_lens
 
-        key_cache = kv_cache.kv_cache_base.select(1, 0)
-        value_cache = kv_cache.kv_cache_base.select(1, 1)
+        paged_kv_cache = self.reshape_kv_cache(kv_cache.kv_cache_base)
+        key_cache = paged_kv_cache.select(1, 0)
+        value_cache = paged_kv_cache.select(1, 1)
         block_tables_id_device = fmha_params.kv_cache_block_id_device
         max_num_blocks = block_tables_id_device.shape[1]
         K_QScale = None
@@ -1228,8 +1334,9 @@ class AiterDecodeAttnOpNonAsm(AiterDecodeAttnOpBase):
         self, query: torch.Tensor, kv_cache: Optional[LayerKVCache], fmha_params
     ) -> torch.Tensor:
         seq_lens = fmha_params.seq_lens
-        key_cache = kv_cache.kv_cache_base.select(1, 0)
-        value_cache = kv_cache.kv_cache_base.select(1, 1)
+        paged_kv_cache = self.reshape_kv_cache(kv_cache.kv_cache_base)
+        key_cache = paged_kv_cache.select(1, 0)
+        value_cache = paged_kv_cache.select(1, 1)
 
         K_QScale = None
         V_QScale = None
@@ -1252,6 +1359,9 @@ class AiterDecodeAttnOpNonAsm(AiterDecodeAttnOpBase):
         block_size = value_cache.shape[2]
         output = self._get_output(query).view((num_seqs, num_heads, head_size))
         if max_seq_len <= 16384 and (not using_fp8_kvcache) and head_size <= 128:
+            # Re-evaluated every step, since max_seq_len comes from this batch. This
+            # branch places no constraint on block_size, so validate_v_layout checks
+            # the else branch's NONASM_DECODE_PARTITION instead of this size.
             _PARTITION_SIZE_ROCM = 512
             max_num_partitions = (
                 max_seq_len + _PARTITION_SIZE_ROCM - 1
@@ -1293,12 +1403,18 @@ class AiterDecodeAttnOpNonAsm(AiterDecodeAttnOpBase):
                 alibi_slopes,
             )
         else:
-            _PARTITION_SIZE_ROCM = 256
+            _PARTITION_SIZE_ROCM = NONASM_DECODE_PARTITION
 
             max_num_partitions = (
                 max_seq_len + _PARTITION_SIZE_ROCM - 1
             ) // _PARTITION_SIZE_ROCM
-            assert _PARTITION_SIZE_ROCM % block_size == 0
+            # Only reachable without a rope KV cache, which validate_v_layout skips.
+            # A raise, not an assert, because python -O strips asserts.
+            if _PARTITION_SIZE_ROCM % block_size:
+                raise ValueError(
+                    f"--kernel_seq_size_per_block={block_size} must divide the "
+                    f"{_PARTITION_SIZE_ROCM}-token partition non-ASM decode uses here"
+                )
             # output already allocated above via _get_output(query); reuse it here.
             # init tmp_output
             tmp_output = torch.empty(
@@ -1350,10 +1466,11 @@ class AiterDecodeAttnOpNonAsm(AiterDecodeAttnOpBase):
 
 class AiterDecodeAttnOpTriton(AiterDecodeAttnOpBase):
 
-    def __init__(self, attn_configs: AttentionConfigs):
+    def __init__(self, attn_configs: AttentionConfigs, *, linear_v: bool):
         super().__init__(attn_configs)
         self.alloc_scale = attn_configs.kv_cache_dtype == KvCacheDataType.FP8
         self.context_partition_size = 256
+        self.linear_v = linear_v
 
     def support(self, attn_inputs: PyAttentionInputs) -> bool:
         return True
@@ -1375,12 +1492,24 @@ class AiterDecodeAttnOpTriton(AiterDecodeAttnOpBase):
             self.head_num_kv,
             self.context_partition_size,
             kv_scale_buf=fmha_params.kv_scale,
+            linear_v=self.linear_v,
         )
         return output.view(num_seqs, -1)
 
 
-class AiterPrefillImplAsm(FMHAImplBase):
+class AiterImplBase(FMHAImplBase):
+    @classmethod
+    def support(
+        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
+    ) -> bool:
+        return _is_mrope_interleaved_supported(attn_configs)
+
+
+class AiterPrefillImplAsm(AiterImplBase):
     """Aiter prefill attention implementation using ASM."""
+
+    # Non-ASM prefill writes a different BASE layout.
+    interchangeable = False
 
     def __init__(
         self,
@@ -1401,12 +1530,6 @@ class AiterPrefillImplAsm(FMHAImplBase):
         self.fmha_params = self.fmha_impl.prepare(attn_inputs)
         self.rope_params = self.rope_kvcache_impl.prepare(attn_inputs)
         self.write_cache_store_impl = common.create_write_cache_store_impl(attn_inputs)
-
-    @classmethod
-    def support(
-        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
-    ) -> bool:
-        return _is_mrope_interleaved_supported(attn_configs)
 
     def forward(
         self,
@@ -1439,7 +1562,7 @@ class AiterPrefillImplAsm(FMHAImplBase):
         return self.fmha_impl.forward(fmha_input, kv_cache, self.fmha_params)
 
 
-class AiterPrefillImplNonAsm(FMHAImplBase):
+class AiterPrefillImplNonAsm(AiterImplBase):
     """Aiter prefill attention implementation using non-ASM."""
 
     def __init__(
@@ -1462,12 +1585,6 @@ class AiterPrefillImplNonAsm(FMHAImplBase):
         self.rope_params = self.rope_kvcache_impl.prepare(attn_inputs)
         self.write_cache_store_impl = common.create_write_cache_store_impl(attn_inputs)
 
-    @classmethod
-    def support(
-        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
-    ) -> bool:
-        return _is_mrope_interleaved_supported(attn_configs)
-
     def forward(
         self,
         qkv: torch.Tensor,
@@ -1499,7 +1616,7 @@ class AiterPrefillImplNonAsm(FMHAImplBase):
         return self.fmha_impl.forward(fmha_input, kv_cache, self.fmha_params)
 
 
-class AiterPrefillImplPaged(FMHAImplBase):
+class AiterPrefillImplPaged(AiterImplBase):
     """Paged prefill impl: dispatches between CK batch-prefill and Triton PA at runtime.
 
     - seq_len <= 4: Triton PA (short query optimization)
@@ -1518,7 +1635,10 @@ class AiterPrefillImplPaged(FMHAImplBase):
         self.tokens_per_block = attn_configs.kernel_tokens_per_block
 
         self.batch_prefill_impl = AiterPrefillAttnOpPaged(attn_configs)
-        self.triton_prefill_impl = AiterPrefillAttnOpTriton(attn_configs)
+        # The ASM RoPE writer stores vectorized V, so the Triton reader must match.
+        self.triton_prefill_impl = AiterPrefillAttnOpTriton(
+            attn_configs, linear_v=False
+        )
 
         self.rope_kvcache_impl = FusedRopeKVCachePrefillOpAsm(attn_configs)
         self.rope_kvcache_impl.use_paged_fmha = True
@@ -1679,7 +1799,10 @@ class AiterPrefillImplPaged(FMHAImplBase):
             )
 
 
-class AiterDecodeImplBase(FMHAImplBase):
+class AiterDecodeImplBase(AiterImplBase):
+    # Non-ASM decode can read a different V layout.
+    interchangeable = False
+
     fmha_params: Any
     rope_params: Any
 
@@ -1704,6 +1827,17 @@ class AiterDecodeImplBase(FMHAImplBase):
 
 
 class AiterDecodeImplAsm(AiterDecodeImplBase):
+    @classmethod
+    def support(
+        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
+    ) -> bool:
+        # Not a silent degrade: BASE decode then reads linear V against this
+        # vectorized prefill, and validate_v_layout rejects that pair.
+        return (
+            super().support(attn_configs, attn_inputs)
+            and attn_configs.size_per_head in ASM_DECODE_HEAD_SIZES
+        )
+
     def __init__(
         self,
         attn_configs: AttentionConfigs,
@@ -1722,12 +1856,6 @@ class AiterDecodeImplAsm(AiterDecodeImplBase):
         self.fmha_params = self.fmha_impl.prepare(attn_inputs)
         self.rope_params = self.rope_kvcache_impl.prepare(attn_inputs)
         self.write_cache_store_impl = common.create_write_cache_store_impl(attn_inputs)
-
-    @classmethod
-    def support(
-        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
-    ) -> bool:
-        return _is_mrope_interleaved_supported(attn_configs)
 
     def forward(
         self,
@@ -1770,12 +1898,6 @@ class AiterDecodeImplNonAsm(AiterDecodeImplBase):
         self.rope_params = self.rope_kvcache_impl.prepare(attn_inputs)
         self.write_cache_store_impl = common.create_write_cache_store_impl(attn_inputs)
 
-    @classmethod
-    def support(
-        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
-    ) -> bool:
-        return _is_mrope_interleaved_supported(attn_configs)
-
     def forward(
         self,
         qkv: torch.Tensor,
@@ -1800,6 +1922,15 @@ class AiterDecodeImplNonAsm(AiterDecodeImplBase):
 class AiterDecodeImplTriton(AiterDecodeImplBase):
     """Aiter decode attention implementation using Triton."""
 
+    LINEAR_V = False
+    WRITER = FusedRopeKVCacheDecodeOpAsm
+
+    @classmethod
+    def reads_the_written_layout(
+        cls, attn_configs: AttentionConfigs, fmha_config: Optional[FMHAConfig]
+    ) -> bool:
+        return cls.LINEAR_V != prefill_writes_vectorized_v(attn_configs, fmha_config)
+
     def __init__(
         self,
         attn_configs: AttentionConfigs,
@@ -1807,20 +1938,14 @@ class AiterDecodeImplTriton(AiterDecodeImplBase):
         parallelism_config: Optional[ParallelismConfig] = None,
     ) -> None:
         self.need_rope_kv_cache = attn_configs.need_rope_kv_cache
-        self.fmha_impl = AiterDecodeAttnOpTriton(attn_configs)
-        self.rope_kvcache_impl = FusedRopeKVCacheDecodeOpAsm(attn_configs)
+        self.fmha_impl = AiterDecodeAttnOpTriton(attn_configs, linear_v=self.LINEAR_V)
+        self.rope_kvcache_impl = self.WRITER(attn_configs)
 
         self.attn_inputs = attn_inputs
 
         self.fmha_params = self.fmha_impl.prepare(attn_inputs)
         self.rope_params = self.rope_kvcache_impl.prepare(attn_inputs)
         self.write_cache_store_impl = common.create_write_cache_store_impl(attn_inputs)
-
-    @classmethod
-    def support(
-        cls, attn_configs: AttentionConfigs, attn_inputs: PyAttentionInputs
-    ) -> bool:
-        return _is_mrope_interleaved_supported(attn_configs)
 
     def forward(
         self,
@@ -1838,3 +1963,8 @@ class AiterDecodeImplTriton(AiterDecodeImplBase):
         )
 
         return self.fmha_impl.forward(fmha_input, kv_cache, self.fmha_params)
+
+
+class AiterDecodeImplTritonLinear(AiterDecodeImplTriton):
+    LINEAR_V = True
+    WRITER = FusedRopeKVCacheDecodeOpNonAsm
