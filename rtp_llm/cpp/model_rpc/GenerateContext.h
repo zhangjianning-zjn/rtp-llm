@@ -38,6 +38,7 @@ public:
     void                                     reportMetrics(RpcMetricsCollector& collector);
     virtual void                             setStream(const std::shared_ptr<GenerateStream>& stream);
     virtual std::shared_ptr<GenerateStream>& getStream();
+    void                                     markRpcHandlingCompleted();
 
 public:
     int64_t                               request_id;
@@ -57,9 +58,12 @@ public:
 
 protected:
     std::shared_ptr<GenerateStream> stream_;
-    bool                            retryable_ = true;
+    bool                            retryable_              = true;
+    bool                            rpc_handling_completed_ = false;
 
 protected:
+    void cancelStreamOnTeardown() noexcept;
+    void stopStreamForRetry();
     void stopStream();
 };
 

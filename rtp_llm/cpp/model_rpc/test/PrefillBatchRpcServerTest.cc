@@ -6,7 +6,11 @@
 #include <thread>
 #include <vector>
 
+#define private public
+#define protected public
 #include "rtp_llm/cpp/model_rpc/PrefillBatchRpcServer.h"
+#undef protected
+#undef private
 #include "rtp_llm/cpp/normal_engine/NormalGenerateStream.h"
 
 namespace rtp_llm {

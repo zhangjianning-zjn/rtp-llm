@@ -147,6 +147,11 @@ int64_t batchErrorCode(const grpc::Status& status) {
     return status.error_code();
 }
 
+void completePrefillContext(PrefillGenerateContext& context, const grpc::Status& status) {
+    context.error_status = status;
+    context.markRpcHandlingCompleted();
+}
+
 // Both cancel-before-register fences and recently completed request ids only
 // need to cover the rolling dispatch/reconciliation window. Keeping the two
 // registries on the same bounded lifetime also prevents unbounded id history.
@@ -161,7 +166,7 @@ void DeferredPrefillContext::cancel(const grpc::Status& status) {
     if (!context->tryMarkOtherTerminal()) {
         return;
     }
-    context->error_status = status;
+    completePrefillContext(*context, status);
     context->cancel_state->store(true);
     context->tryCancelDownstream();
     auto stream = context->getStream();
@@ -836,6 +841,7 @@ grpc::Status PrefillBatchRpcServer::acceptGroup(std::vector<BatchSlot> slots, En
             // NOT_FOUND.
             deferred_contexts_->finish(request_id, slot.deferred.get());
             result.stage_status = preferPriorityPreemption(prefill_context, result.stage_status);
+            completePrefillContext(prefill_context, result.stage_status);
             addBatchError(
                 response, request_id, batchErrorCode(result.stage_status), result.stage_status.error_message());
             continue;
@@ -854,6 +860,9 @@ grpc::Status PrefillBatchRpcServer::acceptGroup(std::vector<BatchSlot> slots, En
                                        preferPriorityPreemption(prefill_context, grpc::Status::OK) :
                                        grpc::Status(grpc::StatusCode::UNAVAILABLE,
                                                     "request became terminal before group admission");
+            if (!prefill_context.isPriorityPreempted()) {
+                completePrefillContext(prefill_context, terminal_status);
+            }
             addBatchError(response,
                           request_id,
                           batchErrorCode(terminal_status),
@@ -1205,9 +1214,7 @@ grpc::Status PrefillBatchRpcServer::FetchResponse(grpc::ServerContext*          
     // completed FetchResponse.
     deferred_contexts_->finish(request_id, deferred.get());
     status = preferPriorityPreemption(prefill_context, status);
-    if (!status.ok()) {
-        prefill_context.error_status = status;
-    }
+    completePrefillContext(prefill_context, status);
     if (deferred->finishOperation()) {
         schedulePriorityFinalization(request_id, deferred);
     }
