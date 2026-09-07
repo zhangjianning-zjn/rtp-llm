@@ -337,6 +337,7 @@ class TestPyFlashinferDecodeAttnOp(BaseAttentionTest):
             config.seq_size_per_block,
             local_kv_head_num,
             config.size_per_head,
+            dtype=self.cache_dtype(config.attn_configs),
         )
         output = attn_op.forward(q, kv_cache, params)
         block_id_list = self._generate_block_id_list(
@@ -350,11 +351,9 @@ class TestPyFlashinferDecodeAttnOp(BaseAttentionTest):
             block_id_list,
             config.seq_size_per_block,
         )
-        compare_tensors(
+        self._assert_output_close(
             output,
             reference,
-            rtol=1e-2,
-            atol=1e-2,
             name="Eager CUDA-metadata decode output",
         )
 
@@ -559,11 +558,9 @@ class TestPyFlashinferDecodeCudaGraph(BaseAttentionTest):
             block_id_list,
             seq_size_per_block,
         )
-        compare_tensors(
+        self._assert_output_close(
             output[:active_batch_size],
             reference,
-            rtol=1e-2,
-            atol=1e-2,
             name=f"CUDA-core graph replay output ({sequence_lengths})",
         )
 
@@ -653,6 +650,7 @@ class TestPyFlashinferDecodeCudaGraph(BaseAttentionTest):
             self.assertEqual(plan_mock.call_count, 2)
 
         self.assertEqual(attn_op.decode_wrapper._fixed_batch_size, capture_bs)
+
     def test_cuda_core_replay_replans_only_on_page_topology_change(self):
         """CUDA-core replay caches only topology and refreshes graph buffers."""
         config = self._create_config(head_num=32, head_num_kv=32)
@@ -766,6 +764,7 @@ class TestPyFlashinferDecodeCudaGraph(BaseAttentionTest):
                 config.seq_size_per_block,
                 local_kv_head_num,
                 config.size_per_head,
+                dtype=self.cache_dtype(config.attn_configs),
             )
             skipped_replan_output = attn_op.forward(q, kv_cache, fmha_params)
             self._assert_active_output_matches_reference(
@@ -854,6 +853,7 @@ class TestPyFlashinferDecodeCudaGraph(BaseAttentionTest):
             config.seq_size_per_block,
             local_kv_head_num,
             config.size_per_head,
+            dtype=self.cache_dtype(config.attn_configs),
         )
 
         with mock.patch.object(
