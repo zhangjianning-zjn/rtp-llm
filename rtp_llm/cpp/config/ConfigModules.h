@@ -170,7 +170,7 @@ struct KVCacheConfig {
     int64_t                                 memory_cache_disk_sync_timeout_ms = 30000;
     int                                     linear_step                       = 1;  // for linear attention cache reuse
     // Fields merged from PyKvCacheConfig
-    int         fp8_kv_cache              = 0;
+    int fp8_kv_cache = 0;
     // "auto" preserves a model-declared recurrent-state dtype. Models
     // without such a declaration keep LinearAttentionConfig's BF16 default;
     // the legacy remote connector falls back to BF16 because it requires one
@@ -352,7 +352,7 @@ struct SpeculativeExecutionConfig {
     std::string     checkpoint_path               = "";
     // DSpARK noise/mask token used to build each fixed-width draft block.
     // Filled from the draft checkpoint by ModelFactory.
-    int64_t     sp_dspark_mask_token_id = -1;
+    int64_t sp_dspark_mask_token_id = -1;
     // True: gamma query rows, including the anchor prediction. False:
     // one conditioning anchor followed by gamma prediction rows.
     bool        sp_dspark_sample_from_anchor = true;
@@ -369,7 +369,7 @@ struct MMControlConfig {
 };
 
 struct MMTransportConfig {
-    std::string     mode = kMMTransportModeGrpc;
+    std::string     mode = kMMTransportModeAuto;
     MMControlConfig control;
     RdmaConfig      rdma;
     // LLM-to-ViT RPC budget when no request input sets mm_timeout_ms.

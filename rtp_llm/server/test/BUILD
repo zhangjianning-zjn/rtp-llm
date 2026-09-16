@@ -57,10 +57,25 @@ py_test(
 )
 
 py_test(
+    name = "master_client_test",
+    srcs = ["master_client_test.py"],
+    deps = [
+        "//rtp_llm:testlib",
+        "//rtp_llm/server:server",
+    ],
+)
+
+py_test(
     name = "recent_cache_key_window_test",
     srcs = ["recent_cache_key_window_test.py"],
     deps = [
         "//rtp_llm/server:server",
     ],
     tags = ["manual"],
+)
+
+py_test(
+    name = "mm_cache_routing_test",
+    srcs = ["mm_cache_routing_test.py"],
+    deps = ["//rtp_llm:testlib"],
 )

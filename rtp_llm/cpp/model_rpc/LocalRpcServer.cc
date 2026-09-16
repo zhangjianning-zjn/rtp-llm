@@ -239,11 +239,13 @@ grpc::Status LocalRpcServer::pollStreamOutput(grpc::ServerContext*             c
     return grpc::Status::OK;
 }
 
-ErrorInfo LocalRpcServer::prepareInput(const GenerateInputPB& input_pb, std::shared_ptr<GenerateInput>& output) {
+ErrorInfo LocalRpcServer::prepareInput(const GenerateInputPB&          input_pb,
+                                       std::shared_ptr<GenerateInput>& output,
+                                       grpc::ServerContext*            context) {
     output = QueryConverter::transQuery(&input_pb);
     if (mm_processor_ != nullptr && output->multimodal_inputs) {
         RTP_LLM_PROFILE_SCOPE("rpc.mm_update_features");
-        auto mm_res = mm_processor_->updateMultimodalFeatures(output);
+        auto mm_res = mm_processor_->updateMultimodalFeatures(output, context);
         if (!mm_res.ok()) {
             return mm_res;
         }
@@ -338,7 +340,7 @@ grpc::Status LocalRpcServer::GenerateStreamCall(grpc::ServerContext*            
     });
     std::shared_ptr<GenerateInput>     input;
     {
-        auto mm_res = prepareInput(*request, input);
+        auto mm_res = prepareInput(*request, input, context);
         if (!mm_res.ok()) {
             generate_context.error_info = mm_res;
             generate_context.error_status =
@@ -382,7 +384,7 @@ grpc::Status LocalRpcServer::BatchGenerateCall(grpc::ServerContext*        conte
     inputs.reserve(batch_size);
     for (int i = 0; i < batch_size; i++) {
         std::shared_ptr<GenerateInput> input;
-        auto                           err = prepareInput(request->inputs(i), input);
+        auto                           err = prepareInput(request->inputs(i), input, context);
         if (!err.ok()) {
             // Fill error results for all requests (0..batch_size-1) to maintain 1:1 mapping
             for (int j = 0; j < batch_size; j++) {

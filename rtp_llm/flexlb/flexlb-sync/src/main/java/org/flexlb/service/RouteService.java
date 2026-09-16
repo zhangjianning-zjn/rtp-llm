@@ -42,6 +42,9 @@ public class RouteService {
         FlexlbConfig flexlbConfig = configService.loadBalanceConfig();
         balanceContext.setConfig(flexlbConfig);
 
+        if (balanceContext.getRequest().isVitOnly()) {
+            return CompletableFuture.completedFuture(router.routeVit(balanceContext));
+        }
         CompletableFuture<Response> resultFuture;
         if (flexlbConfig.isDirect()) {
             resultFuture = routeDirect(balanceContext);

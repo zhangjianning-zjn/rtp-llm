@@ -353,7 +353,7 @@ void PrefillRpcServer::multimodalProcess(PrefillGenerateContext& prefill_context
         return;
     }
 
-    auto result = mm_processor_->updateMultimodalFeatures(input);
+    auto result = mm_processor_->updateMultimodalFeatures(input, prefill_context.server_context);
     if (!result.ok()) {
         prefill_context.setRetryable(isRetryableMultimodalError(result.code()));
         setContextError(prefill_context, result);

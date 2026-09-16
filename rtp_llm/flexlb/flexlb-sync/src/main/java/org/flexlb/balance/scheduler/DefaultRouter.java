@@ -61,6 +61,22 @@ public class DefaultRouter {
                 .orElse(RoleType.PREFILL);
     }
 
+    public Response routeVit(BalanceContext context) {
+        Response invalid = validateRequest(context);
+        if (invalid != null) {
+            return invalid;
+        }
+        try (PinnedRouting routing = selectAll(context, List.of(RoleType.VIT))) {
+            if (routing.rejection() != null) {
+                return routing.rejection();
+            }
+            if (!routing.success()) {
+                return buildFailureResponse(RoleType.VIT);
+            }
+            return buildSuccessResponse(routing.serverStatuses());
+        }
+    }
+
     public Response routeDirect(BalanceContext context) {
         Response validationFailure = validateRequest(context);
         if (validationFailure != null) {
@@ -191,8 +207,13 @@ public class DefaultRouter {
             case PREFILL, PDFUSION ->
                     prefillSelector.select(context, role, group);
             case DECODE -> decodeSelector.select(context, role, group);
-            case VIT -> selectedOrBlocked(
-                    vitSelector.select(context, role, group), role);
+            case VIT -> {
+                SelectedRole selected = vitSelector.select(context, role, group);
+                if (selected == null && context.getRequest().getSelectedVit() != null) {
+                    yield PlacementResult.rejected(Response.error(StrategyErrorType.VIT_ROUTE_STALE));
+                }
+                yield selectedOrBlocked(selected, role);
+            }
             case FRONTEND -> throw new IllegalArgumentException(
                     "Endpoint selection is not supported for FRONTEND");
         };
