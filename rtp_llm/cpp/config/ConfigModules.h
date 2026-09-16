@@ -37,7 +37,7 @@ struct PrefillCPConfig {
     bool kv_cache_sharded = false;
     // Explicit prefill CP size for decode-side fixed/SWA ring sizing; 0 = unset.
     int64_t prefill_cp_size = 0;
-    bool           is_enabled() const {
+    bool    is_enabled() const {
         return method != CPRotateMethod::DISABLED && method != CPRotateMethod::UNKNOWN
                && method != CPRotateMethod::PREFILL_CP;
     }
@@ -206,11 +206,11 @@ struct KVCacheConfig {
     bool dsv4_fixed_pool_use_memory = false;
 
     // HBM cache event publishing. Only tp_rank=0 with pp_size=1 creates an active publisher for each DP replica.
-    std::string kv_cache_event_publisher_type        = "none";  // none | kvcm
-    std::string kv_cache_event_manager_endpoint      = "";      // KVCM Meta HTTP endpoint
-    std::string kv_cache_event_instance_group        = "";
-    std::string kv_cache_event_instance_id           = "";
-    std::string kv_cache_event_host_ip_port          = "";
+    std::string kv_cache_event_publisher_type   = "none";  // none | kvcm
+    std::string kv_cache_event_manager_endpoint = "";      // KVCM Meta HTTP endpoint
+    std::string kv_cache_event_instance_group   = "";
+    std::string kv_cache_event_instance_id      = "";
+    std::string kv_cache_event_host_ip_port     = "";
 
     // Remote connector configuration fields
     bool        reco_enable_vipserver                = false;
@@ -419,7 +419,7 @@ struct FIFOSchedulerConfig {
     //   "N"   -> 1 prefill : N decode (decode-heavy); "1" = strict alternation.
     //   "1/X" -> X prefill : 1 decode (prefill-heavy).
     //   invalid input falls back to "1".
-    std::string decode_prefill_ratio = "1";
+    std::string decode_prefill_ratio           = "1";
     bool        cp_force_single_prefill        = true;
     int64_t     max_inited_kv_cache_streams    = 0;
     int64_t     max_batch_tokens_without_cache = 0;
@@ -437,7 +437,7 @@ struct GrammarConfig {
     // Positive number of grammar compiles that may run concurrently in this engine process.
     int compile_concurrency = 1;
     // Positive number of distinct compiles that may wait behind running work.
-    int compile_queue_size = 2;
+    int         compile_queue_size = 2;
     std::string tokenizer_info_json;
     // Total byte cap split between xgrammar's cache and the engine verdict LRU; <=0 = unlimited.
     int64_t     compiler_cache_bytes = 2L * 1024L * 1024L * 1024L;
@@ -453,6 +453,8 @@ struct RuntimeConfig {
     bool    warm_up                = false;
     bool    warm_up_with_loss      = false;
     bool    model_warm_up          = true;
+
+    int output_dispatcher_worker_count = 0;
 
     // Scheduler configuration
     bool                       use_batch_decode_scheduler = false;
